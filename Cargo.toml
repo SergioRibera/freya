@@ -103,7 +103,7 @@ euclid = "0.22.9"
 itertools = "0.14.0"
 
 # Rendering
-skia-safe = { version = "0.91.1", default-features = false, features = ["binary-cache", "embed-icudtl", "gl", "textlayout", "svg"] }
+skia-safe = { version = "0.91.1", features = ["gl", "textlayout", "svg", "webp"] }
 bytes = "1.10.1"
 
 # Desktop renderer
