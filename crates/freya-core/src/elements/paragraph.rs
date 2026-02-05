@@ -4,59 +4,30 @@ use std::{
     any::Any,
     borrow::Cow,
     cell::RefCell,
-    fmt::{
-        Debug,
-        Display,
-    },
+    fmt::{Debug, Display},
+    ops::Range,
     rc::Rc,
 };
 
 use freya_engine::prelude::{
-    FontStyle,
-    Paint,
-    PaintStyle,
-    ParagraphBuilder,
-    ParagraphStyle,
-    RectHeightStyle,
-    RectWidthStyle,
-    SkParagraph,
-    SkRect,
-    TextStyle,
+    FontStyle, Paint, PaintStyle, ParagraphBuilder, ParagraphStyle, RectHeightStyle,
+    RectWidthStyle, SkParagraph, SkRect, TextStyle,
 };
 use rustc_hash::FxHashMap;
 use torin::prelude::Size2D;
 
 use crate::{
     data::{
-        AccessibilityData,
-        CursorStyleData,
-        EffectData,
-        LayoutData,
-        StyleState,
-        TextStyleData,
+        AccessibilityData, CursorStyleData, EffectData, LayoutData, StyleState, TextStyleData,
         TextStyleState,
     },
     diff_key::DiffKey,
-    element::{
-        Element,
-        ElementExt,
-        EventHandlerType,
-        LayoutContext,
-        RenderContext,
-    },
+    element::{Element, ElementExt, EventHandlerType, LayoutContext, RenderContext},
     events::name::EventName,
     layers::Layer,
     prelude::{
-        AccessibilityExt,
-        Color,
-        ContainerExt,
-        EventHandlersExt,
-        KeyExt,
-        LayerExt,
-        LayoutExt,
-        MaybeExt,
-        TextAlign,
-        TextStyleExt,
+        AccessibilityExt, Color, ContainerExt, EventHandlersExt, KeyExt, LayerExt, LayoutExt,
+        MaybeExt, TextAlign, TextStyleExt,
     },
     style::cursor::CursorStyle,
     text_cache::CachedParagraph,
@@ -73,6 +44,25 @@ use crate::{
 ///     paragraph()
 ///         .span(Span::new("Hello").font_size(24.0))
 ///         .span(Span::new("World").font_size(16.0))
+/// }
+/// ```
+///
+/// ## Links in paragraphs
+///
+/// You can also include clickable links within your paragraphs:
+///
+/// ```rust
+/// # use freya::prelude::*;
+/// fn app() -> impl IntoElement {
+///     paragraph()
+///         .span(Span::new("Check out "))
+///         .link(
+///             SpanLink::new("https://github.com/marc2332/freya", "GitHub")
+///                 .on_click(|url| {
+///                     let _ = open::that(url);
+///                 })
+///         )
+///         .span(Span::new(" for more info."))
 /// }
 /// ```
 pub fn paragraph() -> Paragraph {
@@ -108,10 +98,189 @@ impl Default for ParagraphHolder {
     }
 }
 
-#[derive(PartialEq, Clone)]
+/// Callback type for when a link is clicked.
+pub type OnLinkClick = Rc<dyn Fn(&str)>;
+
+/// Represents a clickable link within a paragraph.
+#[derive(Clone)]
+pub struct SpanLink<'a> {
+    /// URL or navigation target for the link.
+    pub url: Cow<'a, str>,
+    /// Display text for the link.
+    pub text: Cow<'a, str>,
+    /// Text styling data.
+    pub text_style_data: TextStyleData,
+    /// Callback when the link is clicked.
+    pub on_click: Option<OnLinkClick>,
+}
+
+impl<'a> PartialEq for SpanLink<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.url == other.url
+            && self.text == other.text
+            && self.text_style_data == other.text_style_data
+        // Note: on_click is intentionally not compared as functions can't be compared
+    }
+}
+
+impl<'a> std::hash::Hash for SpanLink<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.url.hash(state);
+        self.text.hash(state);
+        self.text_style_data.hash(state);
+        // Note: on_click is intentionally not hashed
+    }
+}
+
+impl<'a> SpanLink<'a> {
+    /// Creates a new link span with the given URL and display text.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use freya::prelude::*;
+    /// let link = SpanLink::new("https://example.com", "Example Site")
+    ///     .color(Color::BLUE)
+    ///     .on_click(|url| {
+    ///         let _ = open::that(url);
+    ///     });
+    /// ```
+    pub fn new(url: impl Into<Cow<'a, str>>, text: impl Into<Cow<'a, str>>) -> Self {
+        let mut text_style_data = TextStyleData::default();
+        // Default link color (blue)
+        text_style_data.color = Some(Color::from_rgb(59, 130, 246));
+        Self {
+            url: url.into(),
+            text: text.into(),
+            text_style_data,
+            on_click: None,
+        }
+    }
+
+    /// Set a callback for when this link is clicked.
+    ///
+    /// The callback receives the URL of the link as a parameter.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use freya::prelude::*;
+    /// SpanLink::new("https://github.com", "GitHub")
+    ///     .on_click(|url| {
+    ///         println!("Opening: {}", url);
+    ///         let _ = open::that(url);
+    ///     })
+    /// ```
+    pub fn on_click(mut self, callback: impl Fn(&str) + 'static) -> Self {
+        self.on_click = Some(Rc::new(callback));
+        self
+    }
+}
+
+impl<'a> TextStyleExt for SpanLink<'a> {
+    fn get_text_style_data(&mut self) -> &mut TextStyleData {
+        &mut self.text_style_data
+    }
+}
+
+impl From<SpanLink<'static>> for ParagraphContent<'static> {
+    fn from(link: SpanLink<'static>) -> Self {
+        ParagraphContent::Link(link)
+    }
+}
+
+/// Represents different types of content within a paragraph.
+#[derive(Clone, PartialEq)]
+pub enum ParagraphContent<'a> {
+    /// Regular text span.
+    Text(Span<'a>),
+    /// Clickable link.
+    Link(SpanLink<'a>),
+}
+
+impl<'a> std::hash::Hash for ParagraphContent<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            ParagraphContent::Text(span) => {
+                0u8.hash(state);
+                span.hash(state);
+            }
+            ParagraphContent::Link(link) => {
+                1u8.hash(state);
+                link.hash(state);
+            }
+        }
+    }
+}
+
+impl<'a> ParagraphContent<'a> {
+    /// Returns the text content of this span/link.
+    pub fn text(&self) -> &Cow<'a, str> {
+        match self {
+            ParagraphContent::Text(span) => &span.text,
+            ParagraphContent::Link(link) => &link.text,
+        }
+    }
+
+    /// Returns the text style data.
+    pub fn text_style_data(&self) -> &TextStyleData {
+        match self {
+            ParagraphContent::Text(span) => &span.text_style_data,
+            ParagraphContent::Link(link) => &link.text_style_data,
+        }
+    }
+}
+
+impl From<Span<'static>> for ParagraphContent<'static> {
+    fn from(span: Span<'static>) -> Self {
+        ParagraphContent::Text(span)
+    }
+}
+
+/// Information about a link's position within the paragraph text.
+#[derive(Clone)]
+pub struct LinkInfo {
+    /// Character range in the paragraph text where this link is located.
+    pub range: Range<usize>,
+    /// URL or navigation target.
+    pub url: String,
+    /// Callback when the link is clicked.
+    pub on_click: Option<OnLinkClick>,
+}
+
+impl PartialEq for LinkInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.range == other.range && self.url == other.url
+    }
+}
+
+impl Debug for LinkInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LinkInfo")
+            .field("range", &self.range)
+            .field("url", &self.url)
+            .finish()
+    }
+}
+
+/// Stores calculated link ranges for click detection.
+#[derive(Clone, Default)]
+pub struct LinkRanges(pub Rc<RefCell<Vec<LinkInfo>>>);
+
+impl PartialEq for LinkRanges {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Debug for LinkRanges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LinkRanges")
+    }
+}
+
+#[derive(Clone)]
 pub struct ParagraphElement {
     pub layout: LayoutData,
-    pub spans: Vec<Span<'static>>,
+    pub contents: Vec<ParagraphContent<'static>>,
     pub accessibility: AccessibilityData,
     pub text_style_data: TextStyleData,
     pub cursor_style_data: CursorStyleData,
@@ -123,6 +292,26 @@ pub struct ParagraphElement {
     pub line_height: Option<f32>,
     pub relative_layer: Layer,
     pub cursor_style: CursorStyle,
+    pub link_ranges: LinkRanges,
+}
+
+impl PartialEq for ParagraphElement {
+    fn eq(&self, other: &Self) -> bool {
+        self.layout == other.layout
+            && self.contents == other.contents
+            && self.accessibility == other.accessibility
+            && self.text_style_data == other.text_style_data
+            && self.cursor_style_data == other.cursor_style_data
+            && self.event_handlers == other.event_handlers
+            && self.sk_paragraph == other.sk_paragraph
+            && self.cursor_index == other.cursor_index
+            && self.highlights == other.highlights
+            && self.max_lines == other.max_lines
+            && self.line_height == other.line_height
+            && self.relative_layer == other.relative_layer
+            && self.cursor_style == other.cursor_style
+            && self.link_ranges == other.link_ranges
+    }
 }
 
 impl Default for ParagraphElement {
@@ -131,7 +320,7 @@ impl Default for ParagraphElement {
         accessibility.builder.set_role(accesskit::Role::Paragraph);
         Self {
             layout: Default::default(),
-            spans: Default::default(),
+            contents: Default::default(),
             accessibility,
             text_style_data: Default::default(),
             cursor_style_data: Default::default(),
@@ -143,6 +332,7 @@ impl Default for ParagraphElement {
             line_height: Default::default(),
             relative_layer: Default::default(),
             cursor_style: CursorStyle::default(),
+            link_ranges: Default::default(),
         }
     }
 }
@@ -151,11 +341,11 @@ impl Display for ParagraphElement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(
             &self
-                .spans
+                .contents
                 .iter()
-                .map(|s| s.text.clone())
+                .map(|c| c.text().clone())
                 .collect::<Vec<_>>()
-                .join("\n"),
+                .join(""),
         )
     }
 }
@@ -177,7 +367,7 @@ impl ElementExt for ParagraphElement {
 
         let mut diff = DiffModifies::empty();
 
-        if self.spans != paragraph.spans {
+        if self.contents != paragraph.contents {
             diff.insert(DiffModifies::STYLE);
             diff.insert(DiffModifies::LAYOUT);
         }
@@ -242,9 +432,21 @@ impl ElementExt for ParagraphElement {
     }
 
     fn measure(&self, context: LayoutContext) -> Option<(Size2D, Rc<dyn Any>)> {
+        let spans: Vec<Span<'static>> = self
+            .contents
+            .iter()
+            .map(|content| match content {
+                ParagraphContent::Text(span) => span.clone(),
+                ParagraphContent::Link(link) => Span {
+                    text: link.text.clone(),
+                    text_style_data: link.text_style_data.clone(),
+                },
+            })
+            .collect();
+
         let cached_paragraph = CachedParagraph {
             text_style_state: context.text_style_state,
-            spans: &self.spans,
+            spans: &spans,
             max_lines: self.max_lines,
             line_height: self.line_height,
             width: context.area_size.width,
@@ -294,9 +496,16 @@ impl ElementExt for ParagraphElement {
                 let mut paragraph_builder =
                     ParagraphBuilder::new(&paragraph_style, context.font_collection);
 
-                for span in &self.spans {
+                let mut current_pos: usize = 0;
+                let mut link_infos = Vec::new();
+
+                for content in &self.contents {
+                    let text_style_data = content.text_style_data();
+                    let text = content.text();
+                    let text_len = text.chars().count();
+
                     let text_style_state =
-                        TextStyleState::from_data(context.text_style_state, &span.text_style_data);
+                        TextStyleState::from_data(context.text_style_state, text_style_data);
                     let mut text_style = TextStyle::new();
                     let mut font_families = context.text_style_state.font_families.clone();
                     font_families.extend_from_slice(context.fallback_fonts);
@@ -310,9 +519,27 @@ impl ElementExt for ParagraphElement {
                         f32::from(text_style_state.font_size) * context.scale_factor as f32,
                     );
                     text_style.set_font_families(&font_families);
+                    text_style.set_font_style(FontStyle::new(
+                        text_style_state.font_weight.into(),
+                        text_style_state.font_width.into(),
+                        text_style_state.font_slant.into(),
+                    ));
+
                     paragraph_builder.push_style(&text_style);
-                    paragraph_builder.add_text(&span.text);
+                    paragraph_builder.add_text(text);
+
+                    if let ParagraphContent::Link(link) = content {
+                        link_infos.push(LinkInfo {
+                            range: current_pos..current_pos + text_len,
+                            url: link.url.to_string(),
+                            on_click: link.on_click.clone(),
+                        });
+                    }
+
+                    current_pos += text_len;
                 }
+
+                *self.link_ranges.0.borrow_mut() = link_infos;
 
                 let mut paragraph = paragraph_builder.build();
                 paragraph.layout(
@@ -568,6 +795,13 @@ impl TextStyleExt for Paragraph {
     }
 }
 
+/// Helper function to check if a paragraph has any links with click handlers.
+fn has_link_handlers(contents: &[ParagraphContent<'static>]) -> bool {
+    contents
+        .iter()
+        .any(|content| matches!(content, ParagraphContent::Link(link) if link.on_click.is_some()))
+}
+
 impl Paragraph {
     pub fn try_downcast(element: &dyn ElementExt) -> Option<ParagraphElement> {
         (element as &dyn Any)
@@ -575,19 +809,58 @@ impl Paragraph {
             .cloned()
     }
 
-    pub fn spans_iter(mut self, spans: impl Iterator<Item = Span<'static>>) -> Self {
-        let spans = spans.collect::<Vec<Span>>();
+    /// Add multiple spans from an iterator.
+    pub fn spans_iter(
+        mut self,
+        spans: impl Iterator<Item = impl Into<ParagraphContent<'static>>>,
+    ) -> Self {
         // TODO: Accessible paragraphs
         // self.element.accessibility.builder.set_value(text.clone());
-        self.element.spans.extend(spans);
+        let contents = spans.map(|p| p.into()).collect::<Vec<_>>();
+        self.element.contents.extend(contents);
         self
     }
 
+    /// Add a text span to the paragraph.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use freya::prelude::*;
+    /// paragraph()
+    ///     .span(Span::new("Hello ").font_size(16.0))
+    ///     .span(Span::new("World!").font_weight(FontWeight::BOLD))
+    /// ```
     pub fn span(mut self, span: impl Into<Span<'static>>) -> Self {
         let span = span.into();
         // TODO: Accessible paragraphs
-        // self.element.accessibility.builder.set_value(text.clone());
-        self.element.spans.push(span);
+        self.element.contents.push(ParagraphContent::Text(span));
+        self
+    }
+
+    /// Add a clickable link to the paragraph.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use freya::prelude::*;
+    /// paragraph()
+    ///     .span(Span::new("Visit "))
+    ///     .link(
+    ///         SpanLink::new("https://github.com", "GitHub")
+    ///             .on_click(|url| {
+    ///                 let _ = open::that(url);
+    ///             })
+    ///     )
+    ///     .span(Span::new(" for more."))
+    /// ```
+    pub fn link(mut self, link: impl Into<SpanLink<'static>>) -> Self {
+        let link = link.into();
+        self.element.contents.push(ParagraphContent::Link(link));
+        self
+    }
+
+    /// Add content (span or link) to the paragraph.
+    pub fn content(mut self, content: impl Into<ParagraphContent<'static>>) -> Self {
+        self.element.contents.push(content.into());
         self
     }
 
@@ -631,6 +904,79 @@ impl Paragraph {
     pub fn line_height(mut self, line_height: impl Into<Option<f32>>) -> Self {
         self.element.line_height = line_height.into();
         self
+    }
+
+    /// Get a reference to the link ranges for external click handling.
+    pub fn link_ranges(&self) -> LinkRanges {
+        self.element.link_ranges.clone()
+    }
+
+    /// Enables link click handling for this paragraph.
+    ///
+    /// This method sets up the necessary event handlers to detect clicks on links
+    /// within the paragraph. Each link's `on_click` callback will be invoked when clicked.
+    ///
+    /// This is automatically called when using `build()`, but can be called manually
+    /// if you need to set up the handlers explicitly.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use freya::prelude::*;
+    /// paragraph()
+    ///     .span(Span::new("Check out "))
+    ///     .link(
+    ///         SpanLink::new("https://github.com", "GitHub")
+    ///             .on_click(|url| {
+    ///                 let _ = open::that(url);
+    ///             })
+    ///     )
+    ///     .with_link_handlers()
+    /// ```
+    pub fn with_link_handlers(self) -> Self {
+        if !has_link_handlers(&self.element.contents) {
+            return self;
+        }
+
+        let link_ranges = self.element.link_ranges.clone();
+        let holder = self.element.sk_paragraph.clone();
+
+        self.on_pointer_press(
+            move |e: crate::prelude::Event<crate::prelude::PointerEventData>| {
+                // Only handle left mouse button clicks
+                if let crate::prelude::PointerEventData::Mouse(mouse_data) = &e.data {
+                    if mouse_data.button != Some(crate::prelude::MouseButton::Left) {
+                        return;
+                    }
+                }
+
+                let paragraph_holder = holder.0.borrow();
+                if let Some(ParagraphHolderInner {
+                    paragraph,
+                    scale_factor,
+                }) = paragraph_holder.as_ref()
+                {
+                    let location = e.element_location();
+                    let scaled_location = (
+                        (location.x * *scale_factor) as f32,
+                        (location.y * *scale_factor) as f32,
+                    );
+
+                    let glyph_info = paragraph.get_glyph_position_at_coordinate(scaled_location);
+                    let char_pos = glyph_info.position as usize;
+
+                    let links = link_ranges.0.borrow();
+                    for link_info in links.iter() {
+                        if link_info.range.contains(&char_pos) {
+                            if let Some(on_click) = &link_info.on_click {
+                                e.stop_propagation();
+                                on_click(&link_info.url);
+                            }
+                            break;
+                        }
+                    }
+                }
+            },
+        )
     }
 }
 
