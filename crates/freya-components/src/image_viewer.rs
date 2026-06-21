@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     collections::hash_map::DefaultHasher,
     fs,
     hash::{
@@ -149,7 +148,8 @@ impl Hash for ImageSource {
 }
 
 impl ImageSource {
-    pub async fn bytes(&self) -> anyhow::Result<(SkImage, Bytes)> {
+    /// Fetch the source's encoded bytes and decode them into a Skia image.
+    pub async fn load(&self) -> anyhow::Result<(SkImage, Bytes)> {
         let source = self.clone();
         blocking::unblock(move || {
             let bytes = match source {
@@ -324,20 +324,14 @@ impl Component for ImageViewer {
                     let source = source.clone();
                     let asset_config = asset_config.clone();
                     spawn_forever(async move {
-                        match source.bytes().await {
+                        match source.load().await {
                             Ok((image, bytes)) => {
-                                // Image loaded
-                                let image_holder = ImageHolder {
-                                    bytes,
-                                    image: Rc::new(RefCell::new(image)),
-                                };
                                 asset_cacher.update_asset(
                                     asset_config,
-                                    Asset::Cached(Rc::new(image_holder)),
+                                    Asset::Cached(Rc::new(ImageHolder::new(image, bytes))),
                                 );
                             }
                             Err(err) => {
-                                // Image errored
                                 asset_cacher
                                     .update_asset(asset_config, Asset::Error(err.to_string()));
                             }
