@@ -232,7 +232,7 @@ impl AssetCacher {
 }
 
 /// Start listening to an asset given a [AssetConfiguration].
-pub fn use_asset(asset_config: &AssetConfiguration) -> Asset {
+pub fn use_asset(asset_config: &AssetConfiguration) {
     let mut asset_cacher = use_hook(AssetCacher::get);
 
     let mut current_config = use_state::<Option<AssetConfiguration>>(|| None);
@@ -260,8 +260,4 @@ pub fn use_asset(asset_config: &AssetConfiguration) -> Asset {
         }
         asset_cacher.listen(ReactiveContext::current(), asset_config.clone());
     }
-
-    asset_cacher
-        .read_asset(asset_config)
-        .expect("Asset should be be cached by now.")
 }

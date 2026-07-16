@@ -274,7 +274,7 @@ enum Status {
 impl Component for GifViewer {
     fn render(&self) -> impl IntoElement {
         let asset_config = AssetConfiguration::new(&self.source, self.asset_age);
-        let asset_data = use_asset(&asset_config);
+        use_asset(&asset_config);
         let mut status = use_state(|| Status::Decoding);
         let mut cached_frames = use_state::<Option<Rc<CachedGifFrames>>>(|| None);
         let mut asset_cacher = use_hook(AssetCacher::get);
@@ -401,29 +401,36 @@ impl Component for GifViewer {
             }
         });
 
-        use_side_effect(move || {
-            if let Some(Asset::Cached(asset)) = asset_cacher.subscribe_asset(&asset_config) {
-                if let Some(bytes) = asset.downcast_ref::<Bytes>().cloned() {
-                    let asset_task = spawn(async move {
-                        if let Err(err) = stream_gif(bytes).await {
-                            *status.write() = Status::Errored(err.to_string());
-                            #[cfg(debug_assertions)]
-                            tracing::error!(
-                                "Failed to render GIF by ID <{}>, error: {err:?}",
-                                asset_config.id
-                            );
-                        }
-                    });
-                    assets_tasks.write().push(asset_task);
-                } else {
-                    #[cfg(debug_assertions)]
-                    tracing::error!(
-                        "Failed to downcast asset of GIF by ID <{}>",
-                        asset_config.id
-                    )
+        use_side_effect({
+            let asset_config = asset_config.clone();
+            move || {
+                if let Some(Asset::Cached(asset)) = asset_cacher.subscribe_asset(&asset_config) {
+                    if let Some(bytes) = asset.downcast_ref::<Bytes>().cloned() {
+                        let asset_task = spawn(async move {
+                            if let Err(err) = stream_gif(bytes).await {
+                                *status.write() = Status::Errored(err.to_string());
+                                #[cfg(debug_assertions)]
+                                tracing::error!(
+                                    "Failed to render GIF by ID <{}>, error: {err:?}",
+                                    asset_config.id
+                                );
+                            }
+                        });
+                        assets_tasks.write().push(asset_task);
+                    } else {
+                        #[cfg(debug_assertions)]
+                        tracing::error!(
+                            "Failed to downcast asset of GIF by ID <{}>",
+                            asset_config.id
+                        )
+                    }
                 }
             }
         });
+
+        let asset_data = asset_cacher
+            .read_asset(&asset_config)
+            .expect("Asset should exist by now");
 
         match (asset_data, cached_frames.read().as_ref()) {
             (Asset::Cached(_), Some(frames)) => match &*status.read() {

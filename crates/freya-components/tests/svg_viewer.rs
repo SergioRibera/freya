@@ -48,6 +48,27 @@ pub fn svg_viewer_rasterizes_synchronously_by_default() {
 }
 
 #[test]
+pub fn svg_viewer_pixel_size_and_color_cache_on_first_render() {
+    fn app() -> impl IntoElement {
+        SvgViewer::new(("ferris", include_bytes!("../../../examples/ferris.svg")))
+            .width(Size::px(100.))
+            .height(Size::px(100.))
+            .color(Color::BLACK)
+    }
+
+    let mut test = launch_test(app);
+    test.sync_and_update();
+
+    // With a known pixel size and an explicit color there is nothing to wait for,
+    // so the asset must be Cached and rendered as an image in the very first pass.
+    assert!(
+        test.find(|_, element| Image::try_downcast(element))
+            .is_some(),
+        "SVG should go straight into the cached state, without polling or a second update"
+    );
+}
+
+#[test]
 pub fn svg_viewer_rasterizes_at_visible_size() {
     fn app() -> impl IntoElement {
         SvgViewer::new(("ferris", include_bytes!("../../../examples/ferris.svg")))

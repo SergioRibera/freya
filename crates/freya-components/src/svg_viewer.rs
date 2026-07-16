@@ -288,7 +288,7 @@ impl Component for SvgViewer {
 
         let asset_config =
             AssetConfiguration::new((&self.source, target, style.as_key()), self.asset_age);
-        let asset = use_asset(&asset_config);
+        use_asset(&asset_config);
 
         // Rasterize whenever the source, size, style or parallel flag change.
         let mut previous_configuration = use_state(|| None);
@@ -306,6 +306,7 @@ impl Component for SvgViewer {
 
                 if self.parallel {
                     let source = self.source.clone();
+                    let asset_config = asset_config.clone();
                     spawn_forever(async move {
                         #[cfg(feature = "remote-asset")]
                         let bytes = {
@@ -323,7 +324,7 @@ impl Component for SvgViewer {
                             }
                             Err(err) => Err(err),
                         };
-                        store_raster(asset_cacher, asset_config, result);
+                        store_raster(asset_cacher, asset_config.clone(), result);
                     });
                 } else {
                     #[cfg(feature = "remote-asset")]
@@ -332,10 +333,14 @@ impl Component for SvgViewer {
                     let bytes = self.source.clone().fetch();
 
                     let result = bytes.and_then(|bytes| rasterize_bytes(&bytes, target, style));
-                    store_raster(asset_cacher, asset_config, result);
+                    store_raster(asset_cacher, asset_config.clone(), result);
                 }
             }
         }
+
+        let asset = asset_cacher
+            .read_asset(&asset_config)
+            .expect("Asset should exist by now");
 
         match asset {
             Asset::Cached(asset) => {
