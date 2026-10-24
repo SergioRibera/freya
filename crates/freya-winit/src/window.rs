@@ -221,11 +221,69 @@ impl AppWindow {
         let purpose = match focused_role {
             AccessibilityRole::PasswordInput => ImePurpose::Password,
             AccessibilityRole::Terminal => ImePurpose::Terminal,
+            AccessibilityRole::EmailInput => ImePurpose::Email,
+            AccessibilityRole::NumberInput => ImePurpose::Number,
+            AccessibilityRole::PhoneNumberInput => ImePurpose::Phone,
+            AccessibilityRole::UrlInput => ImePurpose::Url,
+            AccessibilityRole::DateInput => ImePurpose::Date,
+            AccessibilityRole::TimeInput => ImePurpose::Time,
+            AccessibilityRole::DateTimeInput => ImePurpose::DateTime,
             _ => ImePurpose::Normal,
         };
         if self.ime_purpose != purpose {
             self.ime_purpose = purpose;
             self.window.set_ime_purpose(purpose);
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            use winit::{
+                platform::android::WindowExtAndroid,
+                window::ImeHint,
+            };
+            let hint = match focused_role {
+                AccessibilityRole::MultilineTextInput => {
+                    ImeHint::MULTILINE
+                        | ImeHint::AUTO_CAPITALIZATION
+                        | ImeHint::SPELLCHECK
+                        | ImeHint::COMPLETION
+                }
+                AccessibilityRole::TextInput | AccessibilityRole::SearchInput => {
+                    ImeHint::SPELLCHECK | ImeHint::COMPLETION
+                }
+                AccessibilityRole::PasswordInput => ImeHint::SENSITIVE_DATA,
+                _ => ImeHint::NONE,
+            };
+            self.window.set_ime_hint(hint);
+        }
+    }
+
+    /// Forward the text around the cursor of the focused field to the input method.
+    #[cfg_attr(not(target_os = "android"), allow(unused_variables))]
+    pub(crate) fn set_ime_surrounding_text(&self, text: &str, cursor: usize, anchor: usize) {
+        // Only the soft keyboard of the Android backend takes it for now.
+        #[cfg(target_os = "android")]
+        {
+            use winit::platform::android::WindowExtAndroid;
+            self.window.set_ime_surrounding_text(text, cursor, anchor);
+        }
+    }
+
+    /// Bring the soft keyboard back when the focused text field is tapped after the user hid it.
+    #[cfg_attr(not(target_os = "android"), allow(unused_variables))]
+    pub(crate) fn show_ime_on_tap(&self, position: CursorPoint) {
+        #[cfg(target_os = "android")]
+        {
+            use winit::platform::android::WindowExtAndroid;
+            let role = self.platform.focused_accessibility_node.peek().role();
+            let tapped_focused = self
+                .accessibility
+                .focused_node_id()
+                .and_then(|node_id| self.tree.layout.get(&node_id))
+                .is_some_and(|layout_node| layout_node.visible_area().contains(position.to_f32()));
+            if is_ime_role(role) && tapped_focused {
+                self.window.show_ime();
+            }
         }
     }
 
