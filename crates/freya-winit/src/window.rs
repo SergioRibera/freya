@@ -15,6 +15,7 @@ use freya_components::{
 use freya_core::{
     integration::*,
     prelude::{
+        AccessibilityRole,
         Color,
         CursorIcon,
     },
@@ -54,6 +55,7 @@ use winit::{
     },
     keyboard::ModifiersState,
     window::{
+        ImePurpose,
         Theme,
         Window,
         WindowAttributes,
@@ -134,6 +136,9 @@ pub struct AppWindow {
     /// The area last given to the IME to keep its popups clear of.
     pub(crate) ime_cursor_area: Option<Area>,
 
+    /// The purpose last given to the IME.
+    pub(crate) ime_purpose: ImePurpose,
+
     pub(crate) on_close: Option<OnCloseHook>,
 
     pub(crate) window_attributes: WindowAttributes,
@@ -163,8 +168,7 @@ impl AppWindow {
         let node_id = self.accessibility.focused_node_id().unwrap();
         let layout_node = self.tree.layout.get(&node_id).unwrap();
         let focused_node = AccessibilityTree::create_node(node_id, layout_node, &self.tree, &title);
-        self.window
-            .set_ime_allowed(is_ime_role(focused_node.role()));
+        let focused_role = focused_node.role();
         self.platform
             .focused_accessibility_node
             .set_if_modified(focused_node);
@@ -173,6 +177,7 @@ impl AppWindow {
         }
 
         self.update_ime_cursor_area();
+        self.update_ime(focused_role);
 
         #[cfg(feature = "accessibility")]
         if self.screen_reader.is_on() {
@@ -204,6 +209,24 @@ impl AppWindow {
             PhysicalPosition::new(area.min_x(), area.min_y()),
             PhysicalSize::new(area.width(), area.height()),
         );
+    }
+
+    /// Let the IME in when a text field holds the focus, and tell it what the field is for.
+    pub(crate) fn update_ime(&mut self, focused_role: AccessibilityRole) {
+        let allowed = is_ime_role(focused_role);
+        self.window.set_ime_allowed(allowed);
+        if !allowed {
+            return;
+        }
+        let purpose = match focused_role {
+            AccessibilityRole::PasswordInput => ImePurpose::Password,
+            AccessibilityRole::Terminal => ImePurpose::Terminal,
+            _ => ImePurpose::Normal,
+        };
+        if self.ime_purpose != purpose {
+            self.ime_purpose = purpose;
+            self.window.set_ime_purpose(purpose);
+        }
     }
 
     /// Set the window title and refresh the accessibility label of the root node.
@@ -472,6 +495,8 @@ impl AppWindow {
             dropped_file_paths: Vec::new(),
 
             ime_cursor_area: None,
+
+            ime_purpose: ImePurpose::Normal,
 
             on_close,
 

@@ -53,8 +53,6 @@ use winit::{
     },
 };
 
-#[cfg(feature = "accessibility")]
-use crate::integration::is_ime_role;
 use crate::{
     accessibility::AccessibilityTask,
     config::{
@@ -993,11 +991,12 @@ impl ApplicationHandler<NativeEvent> for WinitRenderer {
                                     &app.tree,
                                     &title,
                                 );
-                                app.window.set_ime_allowed(is_ime_role(focused_node.role()));
+                                let focused_role = focused_node.role();
                                 app.platform
                                     .focused_accessibility_node
                                     .set_if_modified(focused_node);
                                 app.update_ime_cursor_area();
+                                app.update_ime(focused_role);
 
                                 #[cfg(feature = "accessibility")]
                                 {
