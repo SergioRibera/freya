@@ -127,6 +127,58 @@ impl RopeEditor {
         }
     }
 
+    /// Delete `before_bytes` of UTF-8 text before the selection and `after_bytes` after it, as an
+    /// input method asks. The selection itself stays.
+    pub fn delete_surrounding(&mut self, before_bytes: usize, after_bytes: usize) {
+        let first = self.selection.start().min(self.selection.end());
+        let last = self.selection.start().max(self.selection.end());
+        let to_byte = |utf16: usize| self.rope.char_to_byte(self.rope.utf16_cu_to_char(utf16));
+        let to_utf16 = |byte: usize| {
+            let byte = byte.min(self.rope.len_bytes());
+            self.rope.char_to_utf16_cu(self.rope.byte_to_char(byte))
+        };
+        let delete_start = to_utf16(to_byte(first).saturating_sub(before_bytes));
+        let delete_end = to_utf16(to_byte(last) + after_bytes);
+
+        // After the selection first, so the positions before it stay valid.
+        if delete_end > last {
+            self.remove(last..delete_end);
+        }
+        if delete_start < first {
+            let removed = self.remove(delete_start..first);
+            self.selection = match self.selection {
+                TextSelection::Cursor(pos) => TextSelection::Cursor(pos - removed),
+                TextSelection::Range { from, to } => TextSelection::Range {
+                    from: from - removed,
+                    to: to - removed,
+                },
+            };
+        }
+    }
+
+    /// Move the cursor to `cursor_bytes` of UTF-8 text from where it is, and the other end of the
+    /// selection to `anchor_bytes` from it, as an input method asks.
+    pub fn move_selection_by_bytes(&mut self, cursor_bytes: isize, anchor_bytes: isize) {
+        let cursor = self
+            .rope
+            .char_to_byte(self.rope.utf16_cu_to_char(self.cursor_pos()));
+        let to_utf16 = |offset: isize| {
+            let byte = cursor
+                .saturating_add_signed(offset)
+                .min(self.rope.len_bytes());
+            self.rope.char_to_utf16_cu(self.rope.byte_to_char(byte))
+        };
+        let (cursor, anchor) = (to_utf16(cursor_bytes), to_utf16(anchor_bytes));
+        self.selection = if cursor == anchor {
+            TextSelection::Cursor(cursor)
+        } else {
+            TextSelection::Range {
+                from: anchor,
+                to: cursor,
+            }
+        };
+    }
+
     /// Returns the rope text split into (before_preedit, preedit, after_preedit).
     ///
     /// If there is no active preedit, returns the full rope text as `before`
@@ -486,5 +538,35 @@ mod test {
         ed.clear_preedit();
         assert_eq!(ed.rope().to_string(), "Hello");
         assert_eq!(ed.cursor_pos(), 5);
+    }
+
+    #[test]
+    fn input_methods_delete_around_the_selection() {
+        let mut ed = editor("día uno dos");
+        // "uno" selected.
+        ed.set_selection((4, 7));
+        // "día " is 5 bytes, " dos" 4.
+        ed.delete_surrounding(5, 4);
+        assert_eq!(ed.rope().to_string(), "uno");
+        assert_eq!(ed.get_selection(), Some((0, 3)));
+
+        let mut ed = editor("año");
+        ed.move_cursor_to(3);
+        // "ño" is 3 bytes.
+        ed.delete_surrounding(3, 0);
+        assert_eq!(ed.rope().to_string(), "a");
+        assert_eq!(ed.cursor_pos(), 1);
+    }
+
+    #[test]
+    fn input_methods_move_the_selection_in_bytes() {
+        let mut ed = editor("día uno");
+        ed.move_cursor_to(7);
+        // Back over "uno", " ", "a" and the 2 bytes of "í".
+        ed.move_selection_by_bytes(-7, -7);
+        assert_eq!(ed.cursor_pos(), 1);
+        // Select "ía".
+        ed.move_selection_by_bytes(3, 0);
+        assert_eq!(ed.get_selection(), Some((1, 3)));
     }
 }
