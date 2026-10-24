@@ -32,6 +32,7 @@ use torin::prelude::{
     Area,
     CursorPoint,
     Gaps,
+    LayoutNode,
     Length,
     Point2D,
     Position,
@@ -473,36 +474,9 @@ impl ElementExt for ParagraphElement {
         let paragraph = self.sk_paragraph.0.borrow();
         let ParagraphHolderInner { paragraph, .. } = paragraph.as_ref().unwrap();
         let inner_area = context.layout_node.inner_area;
-
-        let cursor_area = match self.cursor_mode {
-            CursorMode::Fit => inner_area.cast_unit(),
-            CursorMode::Expanded => context.layout_node.area,
-        };
-
-        let paragraph_height = paragraph.height();
-        let area_height = inner_area.height();
-        let vertical_offset = match self.vertical_align {
-            VerticalAlign::Start => 0.0,
-            VerticalAlign::Center => (area_height - paragraph_height).max(0.0) / 2.0,
-        };
-
-        let cursor_vertical_offset = match self.cursor_mode {
-            CursorMode::Fit => vertical_offset,
-            CursorMode::Expanded => 0.0,
-        };
-        let cursor_vertical_size_offset = match self.cursor_mode {
-            CursorMode::Fit => 0.,
-            CursorMode::Expanded => vertical_offset * 2.,
-        };
-
-        let to_cursor_area = |rect: SkRect| {
-            SkRect::new(
-                cursor_area.min_x() + rect.left,
-                cursor_area.min_y() + rect.top + cursor_vertical_offset,
-                cursor_area.min_x() + rect.right,
-                cursor_area.min_y() + rect.bottom + cursor_vertical_size_offset,
-            )
-        };
+        let vertical_offset = self.vertical_offset(paragraph, context.layout_node);
+        let to_cursor_area =
+            |rect: SkRect| self.to_cursor_area(rect, context.layout_node, vertical_offset);
 
         // Draw highlights
         for (from, to) in self.highlights.iter() {
@@ -587,9 +561,56 @@ impl ElementExt for ParagraphElement {
                 .draw_rect(to_cursor_area(cursor_rect), &cursor_paint);
         }
     }
+
+    fn caret_area(
+        &self,
+        layout_node: &LayoutNode,
+        text_style_state: &TextStyleState,
+    ) -> Option<Area> {
+        let cursor_index = self.cursor_index?;
+        let paragraph = self.sk_paragraph.0.borrow();
+        let ParagraphHolderInner { paragraph, .. } = paragraph.as_ref()?;
+        let caret = paragraph.cursor_rect(&self.text(), cursor_index, text_style_state.text_align);
+        let vertical_offset = self.vertical_offset(paragraph, layout_node);
+        let caret = self.to_cursor_area(caret, layout_node, vertical_offset);
+        // A thin bar at the insertion point, like the drawn caret.
+        Some(Area::new(
+            (caret.left, caret.top).into(),
+            (2., caret.height()).into(),
+        ))
+    }
 }
 
 impl ParagraphElement {
+    /// Space above the text when it is vertically centered in a taller area.
+    fn vertical_offset(&self, paragraph: &SkParagraph, layout_node: &LayoutNode) -> f32 {
+        match self.vertical_align {
+            VerticalAlign::Start => 0.0,
+            VerticalAlign::Center => {
+                (layout_node.inner_area.height() - paragraph.height()).max(0.0) / 2.0
+            }
+        }
+    }
+
+    /// Moves a rect from paragraph coordinates to where the cursor and highlights are drawn.
+    fn to_cursor_area(
+        &self,
+        rect: SkRect,
+        layout_node: &LayoutNode,
+        vertical_offset: f32,
+    ) -> SkRect {
+        let (cursor_area, top_offset, bottom_offset) = match self.cursor_mode {
+            CursorMode::Fit => (layout_node.inner_area.cast_unit(), vertical_offset, 0.),
+            CursorMode::Expanded => (layout_node.area, 0., vertical_offset * 2.),
+        };
+        SkRect::new(
+            cursor_area.min_x() + rect.left,
+            cursor_area.min_y() + rect.top + top_offset,
+            cursor_area.min_x() + rect.right,
+            cursor_area.min_y() + rect.bottom + bottom_offset,
+        )
+    }
+
     fn has_inline_content(&self) -> bool {
         self.contents
             .iter()

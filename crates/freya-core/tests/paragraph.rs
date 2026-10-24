@@ -246,3 +246,29 @@ fn inline_element_respects_paragraph_margin() {
     assert!(label_area.min_x() > 20.0);
     assert!(label_area.min_y() >= 19.5);
 }
+
+#[test]
+fn caret_area_follows_the_cursor() {
+    fn app() -> impl IntoElement {
+        rect()
+            .padding(10.)
+            .child(paragraph().cursor_index(Some(0)).span("hello"))
+            .child(paragraph().cursor_index(Some(5)).span("hello"))
+            .child(paragraph().span("hello"))
+    }
+
+    let test = launch(app);
+    let paragraphs = test.find_many(|node, element| {
+        Paragraph::try_downcast(element).map(|_| (node.layout().area, node.caret_area()))
+    });
+    let [(start_area, Some(start)), (end_area, Some(end)), (_, None)] = paragraphs[..] else {
+        panic!("unexpected carets: {paragraphs:?}");
+    };
+
+    assert_eq!(start.min_x(), start_area.min_x());
+    assert!((end.min_x() - end_area.max_x()).abs() < 0.1);
+    for (caret, area) in [(start, start_area), (end, end_area)] {
+        assert!(caret.height() > 0.);
+        assert!(area.min_y() <= caret.min_y() && caret.max_y() <= area.max_y());
+    }
+}

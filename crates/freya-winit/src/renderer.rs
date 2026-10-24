@@ -32,11 +32,6 @@ use torin::prelude::{
 };
 #[cfg(all(feature = "tray", not(target_os = "linux")))]
 use tray_icon::TrayIcon;
-#[cfg(feature = "accessibility")]
-use winit::dpi::{
-    LogicalPosition,
-    LogicalSize,
-};
 use winit::{
     application::ApplicationHandler,
     event::{
@@ -968,6 +963,9 @@ impl ApplicationHandler<NativeEvent> for WinitRenderer {
                             PluginHandle::new(&self.proxy),
                         );
 
+                        // The caret may have moved without the focus changing.
+                        app.update_ime_cursor_area();
+
                         self.plugins.send(
                             PluginEvent::BeforeAccessibility {
                                 window: &app.window,
@@ -1000,12 +998,7 @@ impl ApplicationHandler<NativeEvent> for WinitRenderer {
                                 app.platform
                                     .focused_accessibility_node
                                     .set_if_modified(focused_node);
-
-                                let area = layout_node.visible_area();
-                                app.window.set_ime_cursor_area(
-                                    LogicalPosition::new(area.min_x(), area.min_y()),
-                                    LogicalSize::new(area.width(), area.height()),
-                                );
+                                app.update_ime_cursor_area();
 
                                 #[cfg(feature = "accessibility")]
                                 {

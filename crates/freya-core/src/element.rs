@@ -181,6 +181,17 @@ pub trait ElementExt: Any {
     /// Renders this element using the supplied canvas and layout context.
     fn render(&self, _context: RenderContext) {}
 
+    /// The text caret this element shows, if any, in the same coordinates as its layout.
+    ///
+    /// Input methods place their popups (candidate windows, for instance) next to it.
+    fn caret_area(
+        &self,
+        _layout_node: &LayoutNode,
+        _text_style_state: &TextStyleState,
+    ) -> Option<Area> {
+        None
+    }
+
     /// Creates a rounded rectangle from an area using this element's corner radius.
     fn render_rect(&self, area: &Area, scale_factor: f32) -> SkRRect {
         let style = self.style();
