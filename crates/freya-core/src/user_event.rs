@@ -21,6 +21,14 @@ pub enum UserEvent {
     /// Set a custom scale factor.
     SetCustomScaleFactor(f64),
 
+    /// Tell the input method the text around the cursor of the focused field, with the cursor and
+    /// the other end of the selection in bytes.
+    SetImeSurroundingText {
+        text: String,
+        cursor: usize,
+        anchor: usize,
+    },
+
     /// Load a font at runtime.
     LoadFont {
         font_name: Cow<'static, str>,

@@ -307,6 +307,15 @@ pub trait EventHandlersExt: Sized {
         ime_preedit => EventName::ImePreedit;
     }
 
+    event_handlers! {
+        ImeEdit,
+        ImeEditEventData;
+
+        /// Fires when an input method editor (IME) deletes text around the cursor or moves the
+        /// selection.
+        ime_edit => EventName::ImeEdit;
+    }
+
     /// Fires when the element's measured size or position changes.
     fn on_sized(mut self, on_sized: impl Into<EventHandler<Event<SizedEventData>>>) -> Self
     where

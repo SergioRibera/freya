@@ -268,7 +268,9 @@ impl WebApp {
                     self.tree.text_cache.reset();
                     self.needs_render = true;
                 }
-                UserEvent::SetCustomScaleFactor(_) | UserEvent::Erased(_) => {}
+                UserEvent::SetCustomScaleFactor(_)
+                | UserEvent::SetImeSurroundingText { .. }
+                | UserEvent::Erased(_) => {}
             }
         }
 

@@ -10,6 +10,7 @@ use torin::prelude::CursorPoint;
 use crate::{
     events::{
         data::{
+            ImeEditEventData,
             MouseButton,
             WheelSource,
         },
@@ -122,6 +123,11 @@ pub enum PlatformEvent {
         text: String,
         cursor: Option<(usize, usize)>,
     },
+    /// An edit made by the IME.
+    ImeEdit {
+        name: ImeEventName,
+        edit: ImeEditEventData,
+    },
     /// A File event.
     File {
         name: FileEventName,
@@ -133,12 +139,14 @@ pub enum PlatformEvent {
 #[derive(Clone, Debug, PartialEq, Copy, Eq, Hash)]
 pub enum ImeEventName {
     Preedit,
+    Edit,
 }
 
 impl From<ImeEventName> for EventName {
     fn from(value: ImeEventName) -> Self {
         match value {
             ImeEventName::Preedit => EventName::ImePreedit,
+            ImeEventName::Edit => EventName::ImeEdit,
         }
     }
 }
@@ -215,6 +223,7 @@ impl ragnarok::SourceEvent for PlatformEvent {
             Self::Keyboard { name, .. } => (*name).into(),
             Self::Wheel { name, .. } => (*name).into(),
             Self::ImePreedit { name, .. } => (*name).into(),
+            Self::ImeEdit { name, .. } => (*name).into(),
             Self::Touch { name, .. } => (*name).into(),
             Self::File { name, .. } => (*name).into(),
         }

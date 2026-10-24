@@ -58,6 +58,7 @@ use crate::{
         Color,
         FileEventData,
         ImePreeditEventData,
+        ImeEditEventData,
         MaybeExt,
     },
     style::fill::Fill,
@@ -505,5 +506,6 @@ pub enum EventHandlerType {
     Touch(EventHandler<Event<TouchEventData>>),
     Pointer(EventHandler<Event<PointerEventData>>),
     ImePreedit(EventHandler<Event<ImePreeditEventData>>),
+    ImeEdit(EventHandler<Event<ImeEditEventData>>),
     File(EventHandler<Event<FileEventData>>),
 }

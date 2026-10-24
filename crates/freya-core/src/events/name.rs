@@ -50,6 +50,8 @@ pub enum EventName {
     FileDrop,
 
     ImePreedit,
+
+    ImeEdit,
 }
 
 use std::collections::HashSet;

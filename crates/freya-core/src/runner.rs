@@ -560,6 +560,22 @@ impl Runner {
                                             }
                                         }
                                     }
+                                    EventType::ImeEdit(data) => {
+                                        let event_handlers = element.events_handlers();
+                                        if let Some(event_handlers) = event_handlers {
+                                            match event_handlers.get(&event_name) {
+                                                Some(EventHandlerType::ImeEdit(handler)) => {
+                                                    handler.call(Event {
+                                                        data: *data,
+                                                        propagate: propagate.clone(),
+                                                        default: default.clone(),
+                                                    });
+                                                }
+                                                Some(_) => unreachable!(),
+                                                _ => {}
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // Bubble up if desired

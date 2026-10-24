@@ -205,6 +205,7 @@ impl TestingRunner {
                         UserEvent::RequestRedraw
                         | UserEvent::OpenUrl(_)
                         | UserEvent::SetCustomScaleFactor(_)
+                        | UserEvent::SetImeSurroundingText { .. }
                         | UserEvent::Erased(_) => {
                             // Nothing
                         }
