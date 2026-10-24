@@ -292,3 +292,7 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.peniko]
 opt-level = 3
+
+# Soft keyboard work in progress, see SergioRibera/winit `notein-native-input`.
+[patch.crates-io]
+winit = { path = "../winit" }
