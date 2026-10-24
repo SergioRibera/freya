@@ -708,6 +708,13 @@ impl ApplicationHandler<NativeEvent> for WinitRenderer {
                             UserEvent::SetCustomScaleFactor(custom_scale_factor) => {
                                 app.set_custom_scale_factor(custom_scale_factor);
                             }
+                            UserEvent::SetImeSurroundingText {
+                                text,
+                                cursor,
+                                anchor,
+                            } => {
+                                app.set_ime_surrounding_text(&text, cursor, anchor);
+                            }
                         },
                         NativeWindowEventAction::PlatformEvent(platform_event) => {
                             app.process_platform_events(
@@ -1209,6 +1216,10 @@ impl ApplicationHandler<NativeEvent> for WinitRenderer {
                         &mut self.plugins,
                         PluginHandle::new(&self.proxy),
                     );
+
+                    if phase == TouchPhase::Ended {
+                        app.show_ime_on_tap(app.position);
+                    }
                 }
                 WindowEvent::Ime(Ime::Commit(text)) => {
                     app.process_platform_events(
@@ -1217,6 +1228,38 @@ impl ApplicationHandler<NativeEvent> for WinitRenderer {
                             key: keyboard_types::Key::Character(text),
                             code: keyboard_types::Code::Unidentified,
                             modifiers: winit_mappings::map_winit_modifiers(app.modifiers_state),
+                        }],
+                        &mut self.plugins,
+                        PluginHandle::new(&self.proxy),
+                    );
+                }
+                WindowEvent::Ime(Ime::DeleteSurrounding {
+                    before_bytes,
+                    after_bytes,
+                }) => {
+                    app.process_platform_events(
+                        vec![PlatformEvent::ImeEdit {
+                            name: ImeEventName::Edit,
+                            edit: ImeEditEventData::DeleteSurrounding {
+                                before_bytes,
+                                after_bytes,
+                            },
+                        }],
+                        &mut self.plugins,
+                        PluginHandle::new(&self.proxy),
+                    );
+                }
+                WindowEvent::Ime(Ime::Selection {
+                    cursor_bytes,
+                    anchor_bytes,
+                }) => {
+                    app.process_platform_events(
+                        vec![PlatformEvent::ImeEdit {
+                            name: ImeEventName::Edit,
+                            edit: ImeEditEventData::Selection {
+                                cursor_bytes,
+                                anchor_bytes,
+                            },
                         }],
                         &mut self.plugins,
                         PluginHandle::new(&self.proxy),
