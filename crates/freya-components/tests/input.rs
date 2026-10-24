@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use freya::prelude::*;
 use freya_testing::prelude::*;
 
@@ -584,4 +586,19 @@ pub fn input_applies_input_method_edits() {
     });
     test.write_text(",");
     assert!(has_label(&test, "value=hello, world"));
+}
+
+#[test]
+pub fn input_press_on_its_leading_element_focuses_it() {
+    fn app() -> impl IntoElement {
+        let value = use_state(|| "Hello Rustaceans".to_string());
+        Input::new(value)
+            .width(Size::px(300.))
+            .leading(rect().width(Size::px(40.)).height(Size::px(20.)))
+    }
+
+    let mut test = launch_test(app);
+    test.click_cursor((20.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 2);
+    assert!(input_paragraph(&test).0.is_some());
 }

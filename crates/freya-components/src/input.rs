@@ -686,11 +686,12 @@ impl Component for Input {
 
         // Touch editing: the cursor moves when a finger lifts, a long press selects a word, and
         // dragging scrolls unless it continues a selection. See `freya_edit::TouchSelection`.
-        let on_touch_down = move |e: Event<PointerEventData>| {
-            if !matches!(e.data(), PointerEventData::Touch(_)) || display_placeholder {
+        // A touch handler of its own: the pointer down slot belongs to `on_focus_press`.
+        let on_touch_start = move |e: Event<TouchEventData>| {
+            if display_placeholder {
                 return;
             }
-            let location = (e.global_location() - area.read().to_f64().min()).to_point();
+            let location = (e.global_location - area.read().to_f64().min()).to_point();
             editable.process_touch(TouchEditEvent::Down { location });
             let scroll_views = scroll_views.clone();
             let long_press = spawn(async move {
@@ -904,7 +905,7 @@ impl Component for Input {
                     .on_pointer_press(on_pointer_press)
                     .on_global_pointer_up(on_global_pointer_up)
                     .on_global_pointer_move(on_global_pointer_move)
-                    .on_pointer_down(on_touch_down)
+                    .on_touch_start(on_touch_start)
                     .on_global_pointer_down(on_global_touch_down)
             })
             .on_pointer_enter(on_pointer_enter)
