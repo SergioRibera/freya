@@ -627,7 +627,11 @@ impl ApplicationHandler<NativeEvent> for WinitRenderer {
                             UserEvent::SetCustomScaleFactor(custom_scale_factor) => {
                                 app.set_custom_scale_factor(custom_scale_factor);
                             }
-                            UserEvent::SetImeSurroundingText { text, cursor, anchor } => {
+                            UserEvent::SetImeSurroundingText {
+                                text,
+                                cursor,
+                                anchor,
+                            } => {
                                 app.set_ime_surrounding_text(&text, cursor, anchor);
                             }
                             UserEvent::LoadFont { .. } => unreachable!(),

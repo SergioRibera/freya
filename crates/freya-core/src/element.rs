@@ -57,8 +57,8 @@ use crate::{
     prelude::{
         Color,
         FileEventData,
-        ImePreeditEventData,
         ImeEditEventData,
+        ImePreeditEventData,
         MaybeExt,
     },
     style::fill::Fill,

@@ -101,6 +101,12 @@ impl InputMode {
     }
 }
 
+/// A change to the text of an [`Input`].
+enum InputEdit<'a> {
+    Key(&'a Key, Modifiers),
+    Ime(ImeEditEventData),
+}
+
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum InputStatus {
     /// Default state.
@@ -505,16 +511,35 @@ impl Component for Input {
                 }
             })
         });
-        // Edits the text with a key press, from the keyboard or from the touch toolbar.
-        let apply_key = move |key: &Key, modifiers: Modifiers| {
+        // Edits the text with a key press, from the keyboard or from the touch toolbar, or as the
+        // input method asks.
+        let apply_edit = move |edit: InputEdit| {
             movement_timeout.reset();
             let previous_history_version = editable.editor().peek().editor_history().version;
-            editable.process_event(EditableEvent::KeyDown {
-                key,
-                modifiers,
-                editor_line: Some(EditorLine::SingleParagraph),
-                holder: Some(&holder.read()),
-            });
+            match edit {
+                InputEdit::Key(key, modifiers) => {
+                    editable.process_event(EditableEvent::KeyDown {
+                        key,
+                        modifiers,
+                        editor_line: Some(EditorLine::SingleParagraph),
+                        holder: Some(&holder.read()),
+                    });
+                }
+                InputEdit::Ime(ImeEditEventData::DeleteSurrounding {
+                    before_bytes,
+                    after_bytes,
+                }) => {
+                    let mut editor = editable.editor_mut().write();
+                    editor.delete_surrounding(before_bytes, after_bytes);
+                }
+                InputEdit::Ime(ImeEditEventData::Selection {
+                    cursor_bytes,
+                    anchor_bytes,
+                }) => {
+                    let mut editor = editable.editor_mut().write();
+                    editor.move_selection_by_bytes(cursor_bytes, anchor_bytes);
+                }
+            }
             let text = editable.editor().read().committed_text();
 
             let apply_change = match &on_validate {
@@ -542,7 +567,7 @@ impl Component for Input {
         };
 
         let on_key_down = {
-            let mut apply_key = apply_key.clone();
+            let mut apply_edit = apply_edit.clone();
             move |e: Event<KeyboardEventData>| {
                 let key = e.key.clone();
                 let modifiers = e.modifiers;
@@ -564,16 +589,40 @@ impl Component for Input {
                         a11y_id.request_unfocus();
                     }
                     // On change
-                    _ => apply_key(&key, modifiers),
+                    _ => apply_edit(InputEdit::Key(&key, modifiers)),
                 }
             }
         };
 
+        let on_ime_edit = {
+            let mut apply_edit = apply_edit.clone();
+            move |e: Event<ImeEditEventData>| {
+                e.stop_propagation();
+                apply_edit(InputEdit::Ime(*e.data()));
+            }
+        };
+
+        // The soft keyboard suggests, corrects and capitalizes from the text around the cursor.
+        use_side_effect(move || {
+            if !focus().is_focused() || is_masked {
+                return;
+            }
+            let editor = editable.editor().read();
+            if editor.has_preedit() {
+                return;
+            }
+            let rope = editor.rope();
+            let to_byte = |utf16: usize| rope.char_to_byte(rope.utf16_cu_to_char(utf16));
+            let cursor = to_byte(editor.selection().end());
+            let anchor = to_byte(editor.selection().start());
+            Platform::get().set_ime_surrounding_text(rope.to_string(), cursor, anchor);
+        });
+
         let on_toolbar_action = {
-            let mut apply_key = apply_key.clone();
+            let mut apply_edit = apply_edit.clone();
             move |action: TextToolbarAction| {
                 let (key, modifiers) = action.shortcut();
-                apply_key(&key, modifiers);
+                apply_edit(InputEdit::Key(&key, modifiers));
                 // Like on mobile platforms, the toolbar stays around what was selected or copied.
                 match action {
                     TextToolbarAction::SelectAll => editable.touch_mut().write().show(),
@@ -851,6 +900,7 @@ impl Component for Input {
                     .on_key_down(on_key_down)
                     .on_focus_press(on_input_focus_press)
                     .on_ime_preedit(on_ime_preedit)
+                    .on_ime_edit(on_ime_edit)
                     .on_pointer_press(on_pointer_press)
                     .on_global_pointer_up(on_global_pointer_up)
                     .on_global_pointer_move(on_global_pointer_move)

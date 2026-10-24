@@ -549,3 +549,39 @@ pub fn input_touch_tap_outside_unfocuses_but_scrolling_does_not() {
     test.poll_n(Duration::from_millis(1), 2);
     assert!(input_paragraph(&test).0.is_none());
 }
+
+#[test]
+pub fn input_applies_input_method_edits() {
+    fn app() -> impl IntoElement {
+        let value = use_state(String::new);
+        rect()
+            .child(Input::new(value))
+            .child(format!("value={}", value.read()))
+    }
+
+    let mut test = launch_test(app);
+    test.click_cursor((15.0, 15.0));
+    test.write_text("hello wrld");
+
+    // The keyboard corrects "wrld": deletes it and commits the right word.
+    test.send_event(PlatformEvent::ImeEdit {
+        name: ImeEventName::Edit,
+        edit: ImeEditEventData::DeleteSurrounding {
+            before_bytes: 4,
+            after_bytes: 0,
+        },
+    });
+    test.write_text("world");
+    assert!(has_label(&test, "value=hello world"));
+
+    // Space bar drag back to after "hello", then type.
+    test.send_event(PlatformEvent::ImeEdit {
+        name: ImeEventName::Edit,
+        edit: ImeEditEventData::Selection {
+            cursor_bytes: -6,
+            anchor_bytes: -6,
+        },
+    });
+    test.write_text(",");
+    assert!(has_label(&test, "value=hello, world"));
+}
