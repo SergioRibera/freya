@@ -170,6 +170,21 @@ impl Tree {
         self.elements.len()
     }
 
+    /// The text caret shown by `node_id` or by one of its descendants.
+    pub fn caret_area(&self, node_id: NodeId) -> Option<Area> {
+        let caret = self.elements.get(&node_id).and_then(|element| {
+            let layout_node = self.layout.get(&node_id)?;
+            let text_style_state = self.text_style_state.get(&node_id)?;
+            element.caret_area(layout_node, text_style_state)
+        });
+        caret.or_else(|| {
+            self.children
+                .get(&node_id)?
+                .iter()
+                .find_map(|child| self.caret_area(*child))
+        })
+    }
+
     pub fn traverse_depth(&self, mut then: impl FnMut(NodeId)) {
         let mut buffer = vec![NodeId::ROOT];
         while let Some(node_id) = buffer.pop() {

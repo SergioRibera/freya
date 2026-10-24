@@ -79,6 +79,7 @@ use ragnarok::{
     NodesState,
 };
 use torin::prelude::{
+    Area,
     LayoutNode,
     Size2D,
 };
@@ -649,6 +650,11 @@ pub struct TestingNode {
 impl TestingNode {
     pub fn layout(&self) -> LayoutNode {
         self.tree.borrow().layout.get(&self.id).cloned().unwrap()
+    }
+
+    /// The text caret shown by this node or its descendants.
+    pub fn caret_area(&self) -> Option<Area> {
+        self.tree.borrow().caret_area(self.id)
     }
 
     pub fn children(&self) -> Vec<Self> {

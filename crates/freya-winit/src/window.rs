@@ -37,13 +37,15 @@ use ragnarok::{
     NodesState,
 };
 use torin::prelude::{
+    Area,
     CursorPoint,
     Size2D,
 };
 use winit::{
     dpi::{
-        LogicalPosition,
         LogicalSize,
+        PhysicalPosition,
+        PhysicalSize,
     },
     event::ElementState,
     event_loop::{
@@ -129,6 +131,9 @@ pub struct AppWindow {
 
     pub(crate) dropped_file_paths: Vec<PathBuf>,
 
+    /// The area last given to the IME to keep its popups clear of.
+    pub(crate) ime_cursor_area: Option<Area>,
+
     pub(crate) on_close: Option<OnCloseHook>,
 
     pub(crate) window_attributes: WindowAttributes,
@@ -167,16 +172,38 @@ impl AppWindow {
             self.platform.navigation_mode.set(mode);
         }
 
-        let area = layout_node.visible_area();
-        self.window.set_ime_cursor_area(
-            LogicalPosition::new(area.min_x(), area.min_y()),
-            LogicalSize::new(area.width(), area.height()),
-        );
+        self.update_ime_cursor_area();
 
         #[cfg(feature = "accessibility")]
         if self.screen_reader.is_on() {
             self.accessibility_adapter.update_if_active(|| update);
         }
+    }
+
+    /// Keep the IME popups next to the caret of the focused text field, or clear of the whole
+    /// focused element when it shows no caret.
+    pub(crate) fn update_ime_cursor_area(&mut self) {
+        let Some(node_id) = self.accessibility.focused_node_id() else {
+            return;
+        };
+        let area = self.tree.caret_area(node_id).or_else(|| {
+            self.tree
+                .layout
+                .get(&node_id)
+                .map(|layout_node| layout_node.visible_area())
+        });
+        let Some(area) = area else {
+            return;
+        };
+        if self.ime_cursor_area == Some(area) {
+            return;
+        }
+        self.ime_cursor_area = Some(area);
+        // Layout areas are in physical pixels.
+        self.window.set_ime_cursor_area(
+            PhysicalPosition::new(area.min_x(), area.min_y()),
+            PhysicalSize::new(area.width(), area.height()),
+        );
     }
 
     /// Set the window title and refresh the accessibility label of the root node.
@@ -443,6 +470,8 @@ impl AppWindow {
             background: window_config.background,
 
             dropped_file_paths: Vec::new(),
+
+            ime_cursor_area: None,
 
             on_close,
 
