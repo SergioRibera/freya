@@ -51,6 +51,8 @@ pub enum EventName {
 
     ImePreedit,
 
+    ImeEdit,
+
     AccessibilityAction,
 }
 

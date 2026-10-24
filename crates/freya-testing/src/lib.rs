@@ -219,7 +219,9 @@ impl TestingRunner {
                         UserEvent::FocusAccessibilityNode(strategy) => {
                             requested_focus_strategy.borrow_mut().replace(strategy);
                         }
-                        UserEvent::RequestRedraw | UserEvent::SetCustomScaleFactor(_) => {
+                        UserEvent::RequestRedraw
+                        | UserEvent::SetCustomScaleFactor(_)
+                        | UserEvent::SetImeSurroundingText { .. } => {
                             // Nothing
                         }
                     }

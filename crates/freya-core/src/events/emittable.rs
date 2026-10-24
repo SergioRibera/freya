@@ -267,6 +267,16 @@ impl EmmitableEvent {
                 data: EventType::ImePreedit(ImePreeditEventData::new(text, cursor)),
                 bubbles,
             },
+            PlatformEvent::ImeEdit {
+                name: platform_event_name,
+                edit,
+            } => Self {
+                node_id,
+                name,
+                source_event: platform_event_name.into(),
+                data: EventType::ImeEdit(edit),
+                bubbles,
+            },
             PlatformEvent::File {
                 name: platform_event_name,
                 cursor,

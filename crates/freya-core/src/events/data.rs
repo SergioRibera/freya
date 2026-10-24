@@ -314,6 +314,22 @@ impl ImePreeditEventData {
     }
 }
 
+/// An edit an input method makes around the cursor, in bytes of UTF-8 text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImeEditEventData {
+    /// Delete text before and after the selection. The selection itself and the preedit stay.
+    DeleteSurrounding {
+        before_bytes: usize,
+        after_bytes: usize,
+    },
+    /// Move the cursor to `cursor + cursor_bytes` and the other end of the selection to
+    /// `cursor + anchor_bytes`.
+    Selection {
+        cursor_bytes: isize,
+        anchor_bytes: isize,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileEventData {
     pub cursor: CursorPoint,
@@ -338,5 +354,6 @@ pub enum EventType {
     Touch(TouchEventData),
     Pointer(PointerEventData),
     ImePreedit(ImePreeditEventData),
+    ImeEdit(ImeEditEventData),
     File(FileEventData),
 }

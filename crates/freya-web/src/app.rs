@@ -293,7 +293,7 @@ impl WebApp {
                     self.tree.accessibility_diff.request_focus(strategy);
                 }
                 UserEvent::RequestRedraw => self.needs_render = true,
-                UserEvent::SetCustomScaleFactor(_) => {}
+                UserEvent::SetCustomScaleFactor(_) | UserEvent::SetImeSurroundingText { .. } => {}
             }
         }
 

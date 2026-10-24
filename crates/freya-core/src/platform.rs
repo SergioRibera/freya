@@ -248,4 +248,14 @@ impl PlatformWindow {
     pub fn set_custom_scale_factor(&self, custom_scale_factor: f64) {
         self.send(UserEvent::SetCustomScaleFactor(custom_scale_factor));
     }
+
+    /// Tell the input method the text around the cursor of the focused field, so it can suggest,
+    /// correct and capitalize from it. `cursor` and `anchor` are byte offsets into `text`.
+    pub fn set_ime_surrounding_text(&self, text: String, cursor: usize, anchor: usize) {
+        self.send(UserEvent::SetImeSurroundingText {
+            text,
+            cursor,
+            anchor,
+        });
+    }
 }
