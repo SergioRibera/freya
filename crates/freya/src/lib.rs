@@ -250,6 +250,7 @@ pub mod components {
         svg_viewer::*,
         switch::*,
         table::*,
+        text_selection_controls::*,
         theming::{
             component_themes::{
                 ColorsSheet,

@@ -21,6 +21,7 @@ use torin::{
         Alignment,
         Area,
         Content,
+        CursorPoint,
         Direction,
         Point2D,
         Vector2D,
@@ -34,9 +35,14 @@ use crate::{
     define_theme,
     get_theme,
     scrollviews::{
+        EnclosingScrollViews,
         ScrollConfig,
         ScrollView,
         use_scroll_controller,
+    },
+    text_selection_controls::{
+        TextSelectionControls,
+        TextToolbarAction,
     },
 };
 
@@ -360,6 +366,9 @@ impl Component for Input {
             },
         );
         let mut is_dragging = use_state(|| false);
+        let mut long_press_task = use_state(|| None::<TaskHandle>);
+        let mut touch_origin = use_state(|| None::<CursorPoint>);
+        let scroll_views = use_hook(EnclosingScrollViews::get);
         let mut value = self.value.clone();
 
         let theme_colors = match self.style_variant {
@@ -496,62 +505,84 @@ impl Component for Input {
                 }
             })
         });
-        let on_key_down = move |e: Event<KeyboardEventData>| {
-            let key = e.key.clone();
-            let modifiers = e.modifiers;
+        // Edits the text with a key press, from the keyboard or from the touch toolbar.
+        let apply_key = move |key: &Key, modifiers: Modifiers| {
+            movement_timeout.reset();
+            let previous_history_version = editable.editor().peek().editor_history().version;
+            editable.process_event(EditableEvent::KeyDown {
+                key,
+                modifiers,
+                editor_line: Some(EditorLine::SingleParagraph),
+                holder: Some(&holder.read()),
+            });
+            let text = editable.editor().read().committed_text();
 
-            if !on_pre_key_down.call(e) {
-                return;
-            }
-
-            match &key {
-                // On submit
-                Key::Named(NamedKey::Enter) if !multiline => {
-                    if let Some(on_submit) = &on_submit {
-                        let text = editable.editor().peek().committed_text();
-                        on_submit.call(text);
-                    }
-                }
-                // On unfocus
-                Key::Named(NamedKey::Escape) => {
-                    a11y_id.request_unfocus();
-                }
-                // On change
-                _ => {
-                    movement_timeout.reset();
-                    let previous_history_version =
-                        editable.editor().peek().editor_history().version;
-                    editable.process_event(EditableEvent::KeyDown {
-                        key: &key,
-                        modifiers,
-                        editor_line: Some(EditorLine::SingleParagraph),
-                        holder: Some(&holder.read()),
-                    });
-                    let text = editable.editor().read().committed_text();
-
-                    let apply_change = match &on_validate {
-                        Some(on_validate) => {
-                            let mut editor = editable.editor_mut().write();
-                            let validator = InputValidator::new(text.clone());
-                            on_validate.call(validator.clone());
-                            if !validator.is_valid() {
-                                if let Some(selection) = editor.undo() {
-                                    *editor.selection_mut() = selection;
-                                }
-                                editor.editor_history_mut().clear_redos();
-                            }
-                            validator.is_valid()
+            let apply_change = match &on_validate {
+                Some(on_validate) => {
+                    let mut editor = editable.editor_mut().write();
+                    let validator = InputValidator::new(text.clone());
+                    on_validate.call(validator.clone());
+                    if !validator.is_valid() {
+                        if let Some(selection) = editor.undo() {
+                            *editor.selection_mut() = selection;
                         }
-                        None => true,
-                    };
+                        editor.editor_history_mut().clear_redos();
+                    }
+                    validator.is_valid()
+                }
+                None => true,
+            };
 
-                    if apply_change {
-                        *value.write() = text;
+            if apply_change {
+                *value.write() = text;
+            }
+            if editable.editor().peek().editor_history().version == previous_history_version {
+                follow_cursor();
+            }
+        };
+
+        let on_key_down = {
+            let mut apply_key = apply_key.clone();
+            move |e: Event<KeyboardEventData>| {
+                let key = e.key.clone();
+                let modifiers = e.modifiers;
+
+                if !on_pre_key_down.call(e) {
+                    return;
+                }
+
+                match &key {
+                    // On submit
+                    Key::Named(NamedKey::Enter) if !multiline => {
+                        if let Some(on_submit) = &on_submit {
+                            let text = editable.editor().peek().committed_text();
+                            on_submit.call(text);
+                        }
                     }
-                    if editable.editor().peek().editor_history().version == previous_history_version
-                    {
-                        follow_cursor();
+                    // On unfocus
+                    Key::Named(NamedKey::Escape) => {
+                        a11y_id.request_unfocus();
                     }
+                    // On change
+                    _ => apply_key(&key, modifiers),
+                }
+            }
+        };
+
+        let on_toolbar_action = {
+            let mut apply_key = apply_key.clone();
+            move |action: TextToolbarAction| {
+                let (key, modifiers) = action.shortcut();
+                apply_key(&key, modifiers);
+                // Like on mobile platforms, the toolbar stays around what was selected or copied.
+                match action {
+                    TextToolbarAction::SelectAll => editable.touch_mut().write().show(),
+                    TextToolbarAction::Copy => {
+                        let mut touch = editable.touch_mut().write();
+                        touch.show();
+                        touch.set_toolbar_visible(false);
+                    }
+                    TextToolbarAction::Cut | TextToolbarAction::Paste => {}
                 }
             }
         };
@@ -562,16 +593,15 @@ impl Component for Input {
         };
 
         let on_input_focus_press = move |e: Event<FocusPressEventData>| {
+            if let FocusPressEventData::Touch(_) = e.data() {
+                // Touches edit the text when the finger lifts, see `on_global_pointer_up`. The
+                // press keeps going up so scroll views around can scroll with it.
+                a11y_id.request_focus();
+                return;
+            }
             e.stop_propagation();
             e.prevent_default();
-            if cfg!(target_os = "android") {
-                if a11y_id.is_focused() {
-                    // Require a second press to enabling dragging on Android
-                    is_dragging.set_if_modified(true);
-                }
-            } else {
-                is_dragging.set_if_modified(true);
-            }
+            is_dragging.set_if_modified(true);
             movement_timeout.reset();
             if !display_placeholder {
                 let text_area = area.read().to_f64();
@@ -587,16 +617,13 @@ impl Component for Input {
         };
 
         let on_focus_press = move |e: Event<FocusPressEventData>| {
+            if let FocusPressEventData::Touch(_) = e.data() {
+                a11y_id.request_focus();
+                return;
+            }
             e.stop_propagation();
             e.prevent_default();
-            if cfg!(target_os = "android") {
-                if a11y_id.is_focused() {
-                    // Require a second press to enabling dragging on Android
-                    is_dragging.set_if_modified(true);
-                }
-            } else {
-                is_dragging.set_if_modified(true);
-            }
+            is_dragging.set_if_modified(true);
             movement_timeout.reset();
             if !display_placeholder {
                 editable.process_event(EditableEvent::Down {
@@ -608,7 +635,61 @@ impl Component for Input {
             a11y_id.request_focus();
         };
 
+        // Touch editing: the cursor moves when a finger lifts, a long press selects a word, and
+        // dragging scrolls unless it continues a selection. See `freya_edit::TouchSelection`.
+        let on_touch_down = move |e: Event<PointerEventData>| {
+            if !matches!(e.data(), PointerEventData::Touch(_)) || display_placeholder {
+                return;
+            }
+            let location = (e.global_location() - area.read().to_f64().min()).to_point();
+            editable.process_touch(TouchEditEvent::Down { location });
+            let scroll_views = scroll_views.clone();
+            let long_press = spawn(async move {
+                timer(LONG_PRESS_TIMEOUT).await;
+                editable.process_touch(TouchEditEvent::LongPress {
+                    location,
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if editable.touch().peek().is_selecting() {
+                    scroll_views.take_over_drag();
+                    a11y_id.request_focus();
+                }
+            });
+            if let Some(previous) = long_press_task.write().replace(long_press) {
+                previous.cancel();
+            }
+        };
+
+        let on_global_touch_down = move |e: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = e.data() {
+                touch_origin.set(Some(e.global_location()));
+            }
+        };
+
         let on_global_pointer_move = move |e: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = e.data() {
+                let touch = editable.touch().peek().clone();
+                // Handles report their own moves.
+                if !touch.is_active() || touch.dragged_handle().is_some() {
+                    return;
+                }
+                let text_area = area.read().to_f64();
+                editable.process_touch(TouchEditEvent::Move {
+                    location: (e.global_location() - text_area.min()).to_point(),
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if !editable.touch().peek().is_pressed()
+                    && let Some(long_press) = long_press_task.write().take()
+                {
+                    long_press.cancel();
+                }
+                if editable.touch().peek().is_selecting() {
+                    follow_cursor();
+                }
+                return;
+            }
             if a11y_id.is_focused() && *is_dragging.read() {
                 let text_area = area.read().to_f64();
                 let location = (e.global_location() - text_area.min()).to_point();
@@ -631,7 +712,34 @@ impl Component for Input {
             }
         };
 
-        let on_global_pointer_up = move |_: Event<PointerEventData>| {
+        let on_global_pointer_up = move |e: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = e.data() {
+                if let Some(long_press) = long_press_task.write().take() {
+                    long_press.cancel();
+                }
+                let touch = editable.touch().peek().clone();
+                if touch.is_active() {
+                    let text_area = area.read().to_f64();
+                    editable.process_touch(TouchEditEvent::Up {
+                        location: (e.global_location() - text_area.min()).to_point(),
+                        editor_line: EditorLine::SingleParagraph,
+                        holder: &holder.read(),
+                    });
+                    if touch.is_pressed() {
+                        movement_timeout.reset();
+                        a11y_id.request_focus();
+                    }
+                } else if a11y_id.is_focused() {
+                    // Tapping somewhere else lets go of the focus, scrolling does not.
+                    let tapped = touch_origin()
+                        .is_none_or(|origin| origin.distance_to(e.global_location()) <= TOUCH_SLOP);
+                    if tapped {
+                        a11y_id.request_unfocus();
+                    }
+                }
+                touch_origin.set(None);
+                return;
+            }
             match *status.read() {
                 InputStatus::Idle if a11y_id.is_focused() => {
                     editable.process_event(EditableEvent::Release);
@@ -655,6 +763,10 @@ impl Component for Input {
 
         let on_pointer_press = move |e: Event<PointerEventData>| {
             e.stop_propagation();
+            if let PointerEventData::Touch(_) = e.data() {
+                // The global pointer up ends the touch, see `on_global_pointer_up`.
+                return;
+            }
             e.prevent_default();
             match *status.read() {
                 InputStatus::Idle if a11y_id.is_focused() => {
@@ -742,6 +854,8 @@ impl Component for Input {
                     .on_pointer_press(on_pointer_press)
                     .on_global_pointer_up(on_global_pointer_up)
                     .on_global_pointer_move(on_global_pointer_move)
+                    .on_pointer_down(on_touch_down)
+                    .on_global_pointer_down(on_global_touch_down)
             })
             .on_pointer_enter(on_pointer_enter)
             .on_pointer_leave(on_pointer_leave)
@@ -777,6 +891,7 @@ impl Component for Input {
                         Direction::Horizontal
                     })
                     .show_scrollbar(self.multiline)
+                    .drag_scrolling(!editable.touch().read().is_selecting())
                     .on_sized(move |e: Event<SizedEventData>| viewport_area.set_if_modified(e.area))
                     .child(
                         paragraph()
@@ -831,6 +946,21 @@ impl Component for Input {
                 self.trailing
                     .clone()
                     .map(|trailing| rect().padding(Gaps::new(0., 8., 0., 0.)).child(trailing)),
+            )
+            .maybe_child(
+                (self.enabled && focus().is_focused() && !display_placeholder).then(|| {
+                    let editor = editable.editor().read();
+                    let shown_text = match self.mode {
+                        InputMode::Hidden(ch) => ch.to_string().repeat(editor.rope().len_chars()),
+                        InputMode::Shown => editor.rope().to_string(),
+                    };
+                    drop(editor);
+                    TextSelectionControls::new(editable, holder, shown_text, on_toolbar_action)
+                        .paragraph_area(area())
+                        .visible_area(viewport_area())
+                        .text_align(self.text_align)
+                        .copyable(!is_masked)
+                }),
             )
     }
 

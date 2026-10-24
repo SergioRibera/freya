@@ -45,6 +45,7 @@ pub mod slider;
 pub mod svg_viewer;
 pub mod switch;
 pub mod table;
+pub mod text_selection_controls;
 pub mod theming;
 pub mod tile;
 #[cfg(feature = "titlebar")]
