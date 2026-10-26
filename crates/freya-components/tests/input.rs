@@ -708,6 +708,47 @@ pub fn input_touch_long_press_selects_a_word_and_shows_the_toolbar() {
 }
 
 #[test]
+pub fn input_touch_toolbar_is_a_row_inside_the_window() {
+    fn app() -> impl IntoElement {
+        let value = use_state(|| "Hello Rustaceans".to_string());
+        rect()
+            .padding((0., 0., 0., 300.))
+            .child(Input::new(value).width(Size::px(200.)))
+    }
+
+    let label_area = |test: &TestingRunner, text: &str| {
+        test.find(|node, element| {
+            Label::try_downcast(element)
+                .filter(|label| label.text == text)
+                .map(|_| node.layout().area)
+        })
+        .unwrap()
+    };
+
+    let mut test = launch_test(app);
+    test.press_touch((380.0, 15.0));
+    test.poll(Duration::from_millis(10), Duration::from_millis(700));
+    test.release_touch((380.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 3);
+
+    let areas = ["Cut", "Copy", "Paste", "Select all"].map(|text| label_area(&test, text));
+    for area in &areas {
+        assert_eq!(
+            area.min_y(),
+            areas[0].min_y(),
+            "the actions are laid out in a row"
+        );
+        assert!(area.height() < 30.0, "labels take a single line");
+        // The last label ends before the button padding, the toolbar padding and the margin.
+        assert!(area.max_x() <= 480.0, "the toolbar stays inside the window");
+    }
+    assert!(
+        areas[0].min_y() > 30.0,
+        "with no room above the field it goes below"
+    );
+}
+
+#[test]
 pub fn input_touch_tap_outside_unfocuses_but_scrolling_does_not() {
     let mut test = launch_test(touch_input_app);
     test.press_touch((60.0, 15.0));

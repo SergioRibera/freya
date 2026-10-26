@@ -34,6 +34,9 @@ const HANDLE_TOUCH_SIZE: f32 = 44.;
 /// Space between the toolbar and the text it acts on.
 const TOOLBAR_GAP: f32 = 8.;
 
+/// Space kept between the toolbar and the edges of the window.
+const TOOLBAR_WINDOW_MARGIN: f32 = 8.;
+
 /// An action of the touch editing toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextToolbarAction {
@@ -302,46 +305,71 @@ impl Component for TextToolbar {
             (TextToolbarAction::SelectAll, has_text && !selects_all),
         ];
 
-        // Above the text, or below its handles when there is no room above.
+        // Above the text, or below its handles when there is no room above, and always inside
+        // the window.
+        let window = *Platform::get().current_window().root_size.read();
         let toolbar_size = size();
         let above = top - TOOLBAR_GAP - toolbar_size.height;
-        let top = if above >= 0. {
+        let top = if above >= TOOLBAR_WINDOW_MARGIN {
             above
         } else {
             bottom + HANDLE_SIZE * 1.5 + TOOLBAR_GAP
         };
-        let left = (center - toolbar_size.width / 2.).max(0.);
+        let top = clamp_to_window(top, toolbar_size.height, window.height);
+        let left = clamp_to_window(
+            center - toolbar_size.width / 2.,
+            toolbar_size.width,
+            window.width,
+        );
 
+        // Laid out as wide as the window, the toolbar would otherwise only get the room left in
+        // the field that shows it and wrap its labels.
         rect()
             .layer(Layer::Overlay)
             .position(Position::new_global().left(left).top(top))
-            .direction(Direction::Horizontal)
-            .padding(Gaps::new_all(4.))
-            .corner_radius(CornerRadius::new_all(8.))
-            .background(colors.background)
-            .shadow((0., 2., 8., 0., colors.shadow))
-            .on_sized(move |e: Event<SizedEventData>| size.set_if_modified(e.area.size))
-            .on_pointer_down(move |e: Event<PointerEventData>| {
-                if let PointerEventData::Touch(_) = e.data() {
-                    e.stop_propagation();
-                    editable.process_touch(TouchEditEvent::ToolbarDown);
-                }
-            })
-            .children(
-                actions
-                    .into_iter()
-                    .filter(|(_, shown)| *shown)
-                    .map(|(action, _)| {
-                        let on_action = self.on_action.clone();
-                        rect()
-                            .padding(Gaps::new(10., 12., 10., 12.))
-                            .corner_radius(CornerRadius::new_all(6.))
-                            .on_press(move |_| on_action.call(action))
-                            .child(label().text(action.label()).color(colors.text_primary))
-                            .into_element()
-                    }),
+            .width(Size::window_percent(100.))
+            .child(
+                rect()
+                    .direction(Direction::Horizontal)
+                    .padding(Gaps::new_all(4.))
+                    .corner_radius(CornerRadius::new_all(8.))
+                    .background(colors.background)
+                    .shadow((0., 2., 8., 0., colors.shadow))
+                    // Hidden until it is measured, so it never shows in the wrong place.
+                    .opacity(if toolbar_size.is_empty() { 0. } else { 1. })
+                    .on_sized(move |e: Event<SizedEventData>| size.set_if_modified(e.area.size))
+                    .on_pointer_down(move |e: Event<PointerEventData>| {
+                        if let PointerEventData::Touch(_) = e.data() {
+                            e.stop_propagation();
+                            editable.process_touch(TouchEditEvent::ToolbarDown);
+                        }
+                    })
+                    .children(actions.into_iter().filter(|(_, shown)| *shown).map(
+                        |(action, _)| {
+                            let on_action = self.on_action.clone();
+                            rect()
+                                .padding(Gaps::new(10., 12., 10., 12.))
+                                .corner_radius(CornerRadius::new_all(6.))
+                                .on_press(move |_| on_action.call(action))
+                                .child(
+                                    label()
+                                        .text(action.label())
+                                        .max_lines(1)
+                                        .color(colors.text_primary),
+                                )
+                                .into_element()
+                        },
+                    )),
             )
     }
+}
+
+/// Move a span of `size` starting at `start` so it fits in `window`, keeping a margin to its
+/// edges. A span bigger than the window starts at the margin.
+fn clamp_to_window(start: f32, size: f32, window: f32) -> f32 {
+    start
+        .min(window - size - TOOLBAR_WINDOW_MARGIN)
+        .max(TOOLBAR_WINDOW_MARGIN)
 }
 
 impl Component for TextSelectionControls {
