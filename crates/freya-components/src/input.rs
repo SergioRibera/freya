@@ -40,6 +40,10 @@ use crate::{
         ScrollView,
         use_scroll_controller,
     },
+    text_selection_controls::{
+        TextSelectionControls,
+        TextToolbarAction,
+    },
 };
 
 define_theme! {
@@ -502,62 +506,84 @@ impl Component for Input {
                 }
             })
         });
-        let on_key_down = move |e: Event<KeyboardEventData>| {
-            let key = e.key.clone();
-            let modifiers = e.modifiers;
+        // Edits the text with a key press, from the keyboard or from the touch toolbar.
+        let apply_key = move |key: &Key, modifiers: Modifiers| {
+            movement_timeout.reset();
+            let previous_history_version = editable.editor().peek().editor_history().version;
+            editable.process_event(EditableEvent::KeyDown {
+                key,
+                modifiers,
+                editor_line: Some(EditorLine::SingleParagraph),
+                holder: Some(&holder.read()),
+            });
+            let text = editable.editor().read().committed_text();
 
-            if !on_pre_key_down.call(e) {
-                return;
-            }
-
-            match &key {
-                // On submit
-                Key::Named(NamedKey::Enter) if !multiline => {
-                    if let Some(on_submit) = &on_submit {
-                        let text = editable.editor().peek().committed_text();
-                        on_submit.call(text);
-                    }
-                }
-                // On unfocus
-                Key::Named(NamedKey::Escape) => {
-                    a11y_id.request_unfocus();
-                }
-                // On change
-                _ => {
-                    movement_timeout.reset();
-                    let previous_history_version =
-                        editable.editor().peek().editor_history().version;
-                    editable.process_event(EditableEvent::KeyDown {
-                        key: &key,
-                        modifiers,
-                        editor_line: Some(EditorLine::SingleParagraph),
-                        holder: Some(&holder.read()),
-                    });
-                    let text = editable.editor().read().committed_text();
-
-                    let apply_change = match &on_validate {
-                        Some(on_validate) => {
-                            let mut editor = editable.editor_mut().write();
-                            let validator = InputValidator::new(text.clone());
-                            on_validate.call(validator.clone());
-                            if !validator.is_valid() {
-                                if let Some(selection) = editor.undo() {
-                                    *editor.selection_mut() = selection;
-                                }
-                                editor.editor_history_mut().clear_redos();
-                            }
-                            validator.is_valid()
+            let apply_change = match &on_validate {
+                Some(on_validate) => {
+                    let mut editor = editable.editor_mut().write();
+                    let validator = InputValidator::new(text.clone());
+                    on_validate.call(validator.clone());
+                    if !validator.is_valid() {
+                        if let Some(selection) = editor.undo() {
+                            *editor.selection_mut() = selection;
                         }
-                        None => true,
-                    };
+                        editor.editor_history_mut().clear_redos();
+                    }
+                    validator.is_valid()
+                }
+                None => true,
+            };
 
-                    if apply_change {
-                        value.set(text);
+            if apply_change {
+                value.set(text);
+            }
+            if editable.editor().peek().editor_history().version == previous_history_version {
+                follow_cursor();
+            }
+        };
+
+        let on_key_down = {
+            let mut apply_key = apply_key.clone();
+            move |e: Event<KeyboardEventData>| {
+                let key = e.key.clone();
+                let modifiers = e.modifiers;
+
+                if !on_pre_key_down.call(e) {
+                    return;
+                }
+
+                match &key {
+                    // On submit
+                    Key::Named(NamedKey::Enter) if !multiline => {
+                        if let Some(on_submit) = &on_submit {
+                            let text = editable.editor().peek().committed_text();
+                            on_submit.call(text);
+                        }
                     }
-                    if editable.editor().peek().editor_history().version == previous_history_version
-                    {
-                        follow_cursor();
+                    // On unfocus
+                    Key::Named(NamedKey::Escape) => {
+                        a11y_id.request_unfocus();
                     }
+                    // On change
+                    _ => apply_key(&key, modifiers),
+                }
+            }
+        };
+
+        let on_toolbar_action = {
+            let mut apply_key = apply_key.clone();
+            move |action: TextToolbarAction| {
+                let (key, modifiers) = action.shortcut();
+                apply_key(&key, modifiers);
+                // Like on mobile platforms, the toolbar stays around what was selected or copied.
+                match action {
+                    TextToolbarAction::SelectAll => editable.touch_mut().write().show(),
+                    TextToolbarAction::Copy => {
+                        let mut touch = editable.touch_mut().write();
+                        touch.show();
+                        touch.set_toolbar_visible(false);
+                    }
+                    TextToolbarAction::Cut | TextToolbarAction::Paste => {}
                 }
             }
         };
@@ -923,6 +949,21 @@ impl Component for Input {
                 self.trailing
                     .clone()
                     .map(|trailing| rect().padding(Gaps::new(0., 8., 0., 0.)).child(trailing)),
+            )
+            .maybe_child(
+                (self.enabled && focus().is_focused() && !display_placeholder).then(|| {
+                    let editor = editable.editor().read();
+                    let shown_text = match self.mode {
+                        InputMode::Hidden(ch) => ch.to_string().repeat(editor.rope().len_chars()),
+                        InputMode::Shown => editor.rope().to_string(),
+                    };
+                    drop(editor);
+                    TextSelectionControls::new(editable, holder, shown_text, on_toolbar_action)
+                        .paragraph_area(area())
+                        .visible_area(viewport_area())
+                        .text_align(self.text_align)
+                        .copyable(!is_masked)
+                }),
             )
     }
 
