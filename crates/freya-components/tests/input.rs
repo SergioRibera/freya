@@ -635,3 +635,143 @@ pub fn input_long_typing_follows_cursor_test() {
     let (home_x, _) = paragraph_metrics(&test);
     assert_eq!(home_x, initial_x);
 }
+
+fn touch_input_app() -> impl IntoElement {
+    let value = use_state(|| "Hello Rustaceans".to_string());
+    rect()
+        .child(Input::new(value).width(Size::px(300.)))
+        .child(format!("value={}", value.read()))
+}
+
+fn input_paragraph(test: &TestingRunner) -> (Option<usize>, Vec<(usize, usize)>) {
+    test.find(|_, element| {
+        Paragraph::try_downcast(element)
+            .filter(|paragraph| paragraph.spans.iter().any(|s| s.text == "Hello Rustaceans"))
+            .map(|paragraph| (paragraph.cursor_index, paragraph.highlights))
+    })
+    .unwrap()
+}
+
+#[test]
+pub fn input_touch_tap_places_the_cursor_on_release() {
+    let mut test = launch_test(touch_input_app);
+
+    test.press_touch((60.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 2);
+    assert!(
+        input_paragraph(&test).0.is_none_or(|cursor| cursor == 0),
+        "the cursor waits for the finger to lift"
+    );
+
+    test.release_touch((60.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 2);
+    let (cursor, highlights) = input_paragraph(&test);
+    assert!(cursor.is_some_and(|cursor| cursor > 0));
+    assert!(highlights.iter().all(|(from, to)| from == to));
+}
+
+#[test]
+pub fn input_touch_drag_does_not_select() {
+    let mut test = launch_test(touch_input_app);
+    test.press_touch((10.0, 15.0));
+    test.release_touch((10.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 2);
+
+    test.press_touch((10.0, 15.0));
+    test.move_touch((80.0, 15.0));
+    test.move_touch((150.0, 15.0));
+    test.release_touch((150.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 2);
+
+    let (_, highlights) = input_paragraph(&test);
+    assert!(highlights.iter().all(|(from, to)| from == to));
+}
+
+#[test]
+pub fn input_touch_long_press_selects_a_word() {
+    let mut test = launch_test(touch_input_app);
+    test.press_touch((80.0, 15.0));
+    test.poll(Duration::from_millis(10), Duration::from_millis(700));
+
+    let (_, highlights) = input_paragraph(&test);
+    assert_eq!(highlights, vec![(6, 16)]);
+}
+
+#[test]
+pub fn input_touch_drag_over_an_input_scrolls_the_scroll_view() {
+    fn app() -> impl IntoElement {
+        ScrollView::new()
+            .width(Size::fill())
+            .height(Size::fill())
+            .children((0..12).map(|i| {
+                let value = use_state(|| format!("Field {i}"));
+                rect()
+                    .height(Size::px(80.))
+                    .child(Input::new(value).width(Size::px(300.)))
+                    .into_element()
+            }))
+    }
+
+    let field = |test: &TestingRunner| {
+        test.find(|node, element| {
+            Paragraph::try_downcast(element)
+                .filter(|paragraph| paragraph.spans.iter().any(|s| s.text == "Field 3"))
+                .map(|paragraph| (node.layout().area.min_y(), paragraph.highlights))
+        })
+        .unwrap()
+    };
+
+    let mut test = launch_test(app);
+    let (start_y, _) = field(&test);
+    let start = (40.0, f64::from(start_y) + 10.0);
+
+    // The finger lands on the text of a field and goes up, across the text too.
+    test.press_touch(start);
+    for step in 1..=10 {
+        let step = f64::from(step);
+        test.move_touch((start.0 + step * 12.0, start.1 - step * 15.0));
+    }
+    test.release_touch((start.0 + 120.0, start.1 - 150.0));
+    test.poll_n(Duration::from_millis(1), 3);
+
+    let (end_y, highlights) = field(&test);
+    assert!(end_y < start_y - 100.0, "the page scrolled with the finger");
+    assert!(highlights.iter().all(|(from, to)| from == to));
+}
+
+#[test]
+pub fn input_touch_tap_outside_unfocuses_but_scrolling_does_not() {
+    let mut test = launch_test(touch_input_app);
+    test.press_touch((60.0, 15.0));
+    test.release_touch((60.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 2);
+    assert!(input_paragraph(&test).0.is_some());
+
+    // A drag elsewhere scrolls, the input keeps the focus.
+    test.press_touch((100.0, 300.0));
+    test.move_touch((100.0, 200.0));
+    test.release_touch((100.0, 200.0));
+    test.poll_n(Duration::from_millis(1), 2);
+    assert!(input_paragraph(&test).0.is_some());
+
+    // A tap elsewhere lets go of it.
+    test.press_touch((100.0, 300.0));
+    test.release_touch((100.0, 300.0));
+    test.poll_n(Duration::from_millis(1), 2);
+    assert!(input_paragraph(&test).0.is_none());
+}
+
+#[test]
+pub fn input_press_on_its_leading_element_focuses_it() {
+    fn app() -> impl IntoElement {
+        let value = use_state(|| "Hello Rustaceans".to_string());
+        Input::new(value)
+            .width(Size::px(300.))
+            .leading(rect().width(Size::px(40.)).height(Size::px(20.)))
+    }
+
+    let mut test = launch_test(app);
+    test.click_cursor((20.0, 15.0));
+    test.poll_n(Duration::from_millis(1), 2);
+    assert!(input_paragraph(&test).0.is_some());
+}

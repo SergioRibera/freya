@@ -21,6 +21,7 @@ use torin::{
         Alignment,
         Area,
         Content,
+        CursorPoint,
         Direction,
         Point2D,
         Vector2D,
@@ -34,6 +35,7 @@ use crate::{
     define_theme,
     get_theme,
     scrollviews::{
+        EnclosingScrollViews,
         ScrollConfig,
         ScrollView,
         use_scroll_controller,
@@ -360,6 +362,9 @@ impl Component for Input {
             },
         );
         let mut is_dragging = use_state(|| false);
+        let mut long_press_task = use_state(|| None::<TaskHandle>);
+        let mut touch_origin = use_state(|| None::<CursorPoint>);
+        let scroll_views = use_hook(EnclosingScrollViews::get);
         let mut value = self.value.clone();
 
         let theme_colors = match self.style_variant {
@@ -563,16 +568,15 @@ impl Component for Input {
         };
 
         let on_input_focus_press = move |e: Event<FocusPressEventData>| {
+            if let FocusPressEventData::Touch(_) = e.data() {
+                // Touches edit the text when the finger lifts, see `on_global_pointer_up`. The
+                // press keeps going up so scroll views around can scroll with it.
+                a11y_id.request_focus();
+                return;
+            }
             e.stop_propagation();
             e.prevent_default();
-            if cfg!(target_os = "android") {
-                if a11y_id.is_focused() {
-                    // Require a second press to enabling dragging on Android
-                    is_dragging.set_if_modified(true);
-                }
-            } else {
-                is_dragging.set_if_modified(true);
-            }
+            is_dragging.set_if_modified(true);
             movement_timeout.reset();
             if !display_placeholder {
                 let text_area = area.read().to_f64();
@@ -588,16 +592,13 @@ impl Component for Input {
         };
 
         let on_focus_press = move |e: Event<FocusPressEventData>| {
+            if let FocusPressEventData::Touch(_) = e.data() {
+                a11y_id.request_focus();
+                return;
+            }
             e.stop_propagation();
             e.prevent_default();
-            if cfg!(target_os = "android") {
-                if a11y_id.is_focused() {
-                    // Require a second press to enabling dragging on Android
-                    is_dragging.set_if_modified(true);
-                }
-            } else {
-                is_dragging.set_if_modified(true);
-            }
+            is_dragging.set_if_modified(true);
             movement_timeout.reset();
             if !display_placeholder {
                 editable.process_event(EditableEvent::Down {
@@ -609,7 +610,62 @@ impl Component for Input {
             a11y_id.request_focus();
         };
 
+        // Touch editing: the cursor moves when a finger lifts, a long press selects a word, and
+        // dragging scrolls unless it continues a selection. See `freya_edit::TouchSelection`.
+        // A touch handler of its own: the pointer down slot belongs to `on_focus_press`.
+        let on_touch_start = move |e: Event<TouchEventData>| {
+            if display_placeholder {
+                return;
+            }
+            let location = (e.global_location - area.read().to_f64().min()).to_point();
+            editable.process_touch(TouchEditEvent::Down { location });
+            let scroll_views = scroll_views.clone();
+            let long_press = spawn(async move {
+                timer(LONG_PRESS_TIMEOUT).await;
+                editable.process_touch(TouchEditEvent::LongPress {
+                    location,
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if editable.touch().peek().is_selecting() {
+                    scroll_views.take_over_drag();
+                    a11y_id.request_focus();
+                }
+            });
+            if let Some(previous) = long_press_task.write().replace(long_press) {
+                previous.cancel();
+            }
+        };
+
+        let on_global_touch_down = move |e: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = e.data() {
+                touch_origin.set(Some(e.global_location()));
+            }
+        };
+
         let on_global_pointer_move = move |e: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = e.data() {
+                let touch = editable.touch().peek().clone();
+                // Handles report their own moves.
+                if !touch.is_active() || touch.dragged_handle().is_some() {
+                    return;
+                }
+                let text_area = area.read().to_f64();
+                editable.process_touch(TouchEditEvent::Move {
+                    location: (e.global_location() - text_area.min()).to_point(),
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if !editable.touch().peek().is_pressed()
+                    && let Some(long_press) = long_press_task.write().take()
+                {
+                    long_press.cancel();
+                }
+                if editable.touch().peek().is_selecting() {
+                    follow_cursor();
+                }
+                return;
+            }
             if a11y_id.is_focused() && *is_dragging.read() {
                 let text_area = area.read().to_f64();
                 let location = (e.global_location() - text_area.min()).to_point();
@@ -632,7 +688,34 @@ impl Component for Input {
             }
         };
 
-        let on_global_pointer_up = move |_: Event<PointerEventData>| {
+        let on_global_pointer_up = move |e: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = e.data() {
+                if let Some(long_press) = long_press_task.write().take() {
+                    long_press.cancel();
+                }
+                let touch = editable.touch().peek().clone();
+                if touch.is_active() {
+                    let text_area = area.read().to_f64();
+                    editable.process_touch(TouchEditEvent::Up {
+                        location: (e.global_location() - text_area.min()).to_point(),
+                        editor_line: EditorLine::SingleParagraph,
+                        holder: &holder.read(),
+                    });
+                    if touch.is_pressed() {
+                        movement_timeout.reset();
+                        a11y_id.request_focus();
+                    }
+                } else if a11y_id.is_focused() {
+                    // Tapping somewhere else lets go of the focus, scrolling does not.
+                    let tapped = touch_origin()
+                        .is_none_or(|origin| origin.distance_to(e.global_location()) <= TOUCH_SLOP);
+                    if tapped {
+                        a11y_id.request_unfocus();
+                    }
+                }
+                touch_origin.set(None);
+                return;
+            }
             match *status.read() {
                 InputStatus::Idle if a11y_id.is_focused() => {
                     editable.process_event(EditableEvent::Release);
@@ -656,6 +739,10 @@ impl Component for Input {
 
         let on_pointer_press = move |e: Event<PointerEventData>| {
             e.stop_propagation();
+            if let PointerEventData::Touch(_) = e.data() {
+                // The global pointer up ends the touch, see `on_global_pointer_up`.
+                return;
+            }
             e.prevent_default();
             match *status.read() {
                 InputStatus::Idle if a11y_id.is_focused() => {
@@ -744,6 +831,8 @@ impl Component for Input {
                     .on_pointer_press(on_pointer_press)
                     .on_global_pointer_up(on_global_pointer_up)
                     .on_global_pointer_move(on_global_pointer_move)
+                    .on_touch_start(on_touch_start)
+                    .on_global_pointer_down(on_global_touch_down)
             })
             .on_pointer_enter(on_pointer_enter)
             .on_pointer_leave(on_pointer_leave)
@@ -779,6 +868,7 @@ impl Component for Input {
                         Direction::Horizontal
                     })
                     .show_scrollbar(self.multiline)
+                    .drag_scrolling(!editable.touch().read().is_selecting())
                     .on_sized(move |e: Event<SizedEventData>| viewport_area.set_if_modified(e.area))
                     .child(
                         paragraph()
