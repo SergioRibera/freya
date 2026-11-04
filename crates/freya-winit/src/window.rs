@@ -160,6 +160,7 @@ impl AppWindow {
         let update =
             self.accessibility
                 .process_updates(&mut self.tree, &self.events_sender, &title);
+        let focus_moved = *self.platform.focused_accessibility_id.peek() != update.focus;
         self.platform
             .focused_accessibility_id
             .set_if_modified(update.focus);
@@ -176,6 +177,17 @@ impl AppWindow {
 
         self.update_ime_cursor_area();
         self.update_ime(focused_role);
+
+        // Moving between text fields keeps the input method enabled, so `update_ime` has no
+        // transition to make; the soft keyboard the user hid with the back button must still
+        // come back for the field they just focused.
+        #[cfg(target_os = "android")]
+        if focus_moved && is_ime_role(focused_role) {
+            use winit::platform::android::WindowExtAndroid;
+            self.window.show_ime();
+        }
+        #[cfg(not(target_os = "android"))]
+        let _ = focus_moved;
 
         #[cfg(feature = "accessibility")]
         if self.screen_reader.is_on() {
