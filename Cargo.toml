@@ -182,7 +182,9 @@ accesskit = "0.25.1"
 accesskit_winit = "0.34.0"
 
 # Performance
-hotpath = "0.29.2"
+# The function sink (hotpath-rs/hotpath#825) is merged but unreleased; sismo
+# records these measures through it.
+hotpath = { git = "https://github.com/hotpath-rs/hotpath", rev = "573d7c21a87c60053c1b0d07a2b8f39324133772" }
 
 # Errors
 anyhow = "1.0.100"
